@@ -61,7 +61,7 @@ enum class DIR : uint {
 };
 
 inline auto dir2p(uint d) {
-    static const vector<Point> table = {{-1, 0}, {0, -1}, {0, 1},{1, 0}, {0, 0}};
+    static const vector<Point> table = {{-1, 0}, {0, -1}, {0, 1}, {1, 0}, {0, 0}};
     return table[d];
 }
 inline auto dir2p8(uint d) {
@@ -117,6 +117,7 @@ struct Status {
     vector<Chara> ninja;
     vector<Chara> dogs;
     vector<uint> cnt;
+    int neardog = INF;
 };
 
 struct Input {
@@ -262,6 +263,7 @@ auto input() {
             auto q = que.front();
             que.pop();
             st.field[q.second.y][q.second.x].visit = q.first;
+            if(st.field[q.second.y][q.second.x].dog && q.first < 5) { st.neardog++; }
             for(uint i = 0; i < 4; i++) {
                 auto& p = dir2p(i);
                 auto& f = st.field[q.second.y + p.y][q.second.x + p.x];
@@ -570,7 +572,7 @@ inline auto escape_closed(Input& in, Output& ou, const uid_t id) {
         }
         ou.val1 = fary;
         ou.val2 = farx;
-        ou.sk = SKILL::MYGHOST;
+        return ou.sk = SKILL::MYGHOST;
     }
     return ou.sk;
 }
@@ -578,8 +580,9 @@ inline auto escape_closed(Input& in, Output& ou, const uid_t id) {
 void find_critical(Input& in, Output& ou) {
     auto& me = in.st[0];
     auto& op = in.st[1];
+    uint costmin = (me.neardog > 4 ? min(15u, in.getCost(SKILL::TORNADO)) : in.getCost(SKILL::TORNADO));
 
-    if(me.nin >= in.getCost(SKILL::OPMATEOR) + in.getCost(SKILL::TORNADO)) {
+    if(me.nin >= in.getCost(SKILL::OPMATEOR) + costmin) {
         for(auto& s : op.souls) {
             DIR dir = DIR::NONE;
             if(s.inRock) {
@@ -614,6 +617,7 @@ void find_critical(Input& in, Output& ou) {
                 }
                 continue;
             }
+            if(op.field[s.y][s.x].threat) { continue; }
             for(auto& nj : op.ninja) {
                 if(dist(nj.y, nj.x, s.y, s.x) == 2 && (nj.y == s.y || nj.x == s.x)) {
                     if(nj.y > s.y) { dir = DIR::UP; }
@@ -635,11 +639,29 @@ void find_critical(Input& in, Output& ou) {
             return;
         }
         for(auto& nj : op.ninja) {
-            
+            int ways = 0;
+            for(uint i = 0; i < 4; i++) {
+                auto& p = dir2p(i);
+                auto& f = op.field[nj.y + p.y][nj.x + p.x];
+                if(f.type != FIELD::FLOOR || f.dog || f.threat) { continue; }
+                ++ways;
+            }
+            if(ways > 1) { continue; }
+            for(uint i = 0; i < 4; i++) {
+                auto& p = dir2p(i);
+                auto& f = op.field[nj.y + p.y][nj.x + p.x];
+                if(f.type != FIELD::FLOOR || f.dog || f.soul || f.threat) { continue; }
+                if(any_of(begin(f.chara), end(f.chara), [](bool b) { return b; })) { continue; }
+                if(isStoneMovable(op, f.y, f.x, static_cast<DIR>(i))) { continue; }
+                ou.val1 = f.y;
+                ou.val2 = f.x;
+                ou.sk = SKILL::OPMATEOR;
+                return;
+            }
         }
     }
 
-    if(me.nin >= in.getCost(SKILL::OPTHUNDER) + in.getCost(SKILL::TORNADO)) {
+    if(me.nin >= in.getCost(SKILL::OPTHUNDER) + costmin) {
         for(auto&& fy : op.field) {
             for(auto&& fxy : fy) {
                 if(fxy.type != FIELD::ROCK) { continue; }
@@ -650,7 +672,7 @@ void find_critical(Input& in, Output& ou) {
                     auto& q = dir2p(3-i);
                     auto& fq = op.field[fxy.y + q.y][fxy.x + q.x];
                     if(fq.type != FIELD::FLOOR || fq.visit == -INF) { continue; }
-                    if(abs(fp.visit - fq.visit) > 20) {
+                    if(abs(fp.visit - fq.visit) > 15) {
                         ou.val1 = fxy.y;
                         ou.val2 = fxy.x;
                         ou.sk = SKILL::OPTHUNDER;
@@ -661,7 +683,7 @@ void find_critical(Input& in, Output& ou) {
         }
     }
 
-    if(me.nin >= in.getCost(SKILL::MYGHOST) + in.getCost(SKILL::TORNADO) * 2) {
+    if(me.nin >= in.getCost(SKILL::MYGHOST) + costmin) {
         int far = -INF, fary = -1, farx = -1;
         for(auto&& fy : me.field) {
             for(auto&& fxy : fy) {
@@ -672,12 +694,16 @@ void find_critical(Input& in, Output& ou) {
                 }
             }
         } 
-        if(far > 20) {
+        if(far > 15) {
             ou.val1 = fary;
             ou.val2 = farx;
             ou.sk = SKILL::MYGHOST;
         }
         return;
+    }
+
+    if(me.nin >= in.getCost(SKILL::SONIC) + costmin && in.getCost(SKILL::SONIC) <= 2) {
+        ou.sk = SKILL::SONIC;
     }
 }
 
