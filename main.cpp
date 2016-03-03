@@ -63,6 +63,10 @@ inline auto dir2p(uint d) {
     static const vector<Point> table = {{-1, 0}, {0, -1}, {0, 1},{1, 0}, {0, 0}};
     return table[d];
 }
+inline auto dir2p8(uint d) {
+    static const vector<Point> table ={{-1, 0}, {0, -1}, {0, 1}, {1, 0}, {-1, 1}, {-1, -1}, {1, 1}, {1, -1}};
+    return table[d];
+}
 inline auto dir2p(DIR d) { return dir2p(static_cast<uint>(d)); }
 inline DIR p2dir(int y, int x) { 
     if(y == 0) {
@@ -97,9 +101,10 @@ struct Soul {
 struct Field {
     FIELD type;
     int y, x;
-    bool threat = false;
-    int value = 0;
+    int threat = 0;
+    int visit = 0;
     bool dog = false;
+    bool soul = false;
     bool chara[2] = {false, false};
 };
 
@@ -126,12 +131,101 @@ struct Output {
     vector<DIR> mv[2];
 };
 
+inline bool isStoneMovable(Status& st, const int y, const int x, DIR d) {
+    auto& p = dir2p(d);
+    auto& ff = st.field[y + p.y][x + p.x];
+    if(ff.type != FIELD::FLOOR) { return false; }
+    if(ff.dog) { return false; }
+    if(any_of(begin(ff.chara), end(ff.chara), [](bool b) { return b; })) { return false; }
+    return true;
+}
+
+inline int calcAround(Status& st, const int y, const int x) {
+    int around = 0;
+    for(uint i = 0; i < 8; i++) {
+        auto& p = dir2p8(i);
+        auto& f = st.field[y + p.y][x + p.x];
+        if(f.type == FIELD::WALL) { around += 3; }
+        else if(f.threat) { around++; }
+        else if(f.type == FIELD::ROCK) {
+            around += 2;
+            if(i < 4) {
+                if(!isStoneMovable(st, f.y, f.x, static_cast<DIR>(i))) { around++; }
+            }
+        }
+    }
+    return around;
+}
+
+inline int calcAroundDog(Status& st, const int y, const int x) {
+    int around = 0;
+    for(uint i = 0; i < 8; i++) {
+        auto& p = dir2p8(i);
+        auto& f = st.field[y + p.y][x + p.x];
+        if(f.dog) { around++; }
+    }
+    return around;
+}
+
+inline void deleteDog(Status& st, const int y, const int x) {
+    st.field[y][x].dog = false;
+    for(uint i = 0; i < 5; i++) {
+        auto& p = dir2p(i);
+        auto& f = st.field[y + p.y][x + p.x];
+        f.threat--;
+    }
+}
+
+inline void newStone(Status& st, const int y, const int x) {
+    st.field[y][x].type = FIELD::ROCK;
+}
+
+inline void deleteStone(Status& st, const int y, const int x) {
+    st.field[y][x].type = FIELD::FLOOR;
+}
+
+inline auto moveStone(Status& st, const int y1, const int x1, DIR d) {
+    deleteStone(st, y1, x1);
+    auto& p = dir2p(d);
+    newStone(st, y1 + p.y, x1 + p.x);
+    return p;
+}
+
+inline auto backStone(Status& st, const int y1, const int x1, DIR d) {
+    auto& p = dir2p(static_cast<uint>(d));
+    deleteStone(st, y1 + p.y, x1 + p.x);
+    newStone(st, y1, x1);
+    return p;
+}
+
+inline auto moveChara(Status& st, const uid_t id, DIR d) {
+    auto& ch = st.ninja[id];
+    st.field[ch.y][ch.x].chara[id] = false;
+    auto& p = dir2p(d);
+    ch.y += p.y;
+    ch.x += p.x;
+    auto& f = st.field[ch.y][ch.x];
+    if(f.type == FIELD::ROCK) { moveStone(st, f.y, f.x, d); }
+    f.chara[id] = true;
+    return p;
+}
+
+inline bool isMoveable(Status& st, const int y, const int x, DIR d) {
+    auto& p = dir2p(d);
+    auto& f = st.field[y + p.y][x + p.x];
+    if(f.type == FIELD::WALL) { return false; }
+    if(f.threat) { return false; }
+    if(f.type == FIELD::ROCK) {
+        if(!isStoneMovable(st, f.y, f.x, d)) { return false; }
+    }
+    return true;
+}
+
 /* IO */
 template <class T, class F>
 auto forvec(vector<T>& v, size_t n, F& f) {
     v.resize(n); for(auto&& e : v) { f(e); }
 }
-
 
 auto input() {
     Input in;
@@ -164,11 +258,12 @@ auto input() {
             st.field[e.y][e.x].dog = true;
             for(uint i = 0; i < 5; i++) {
                 auto p = dir2p(i);
-                st.field[e.y + p.y][e.x + p.x].threat = true;
+                st.field[e.y + p.y][e.x + p.x].threat++;
             }
         }
         for(auto&& e : st.souls) {
             if(st.field[e.y][e.x].type == FIELD::ROCK) { e.inRock = true; }
+            st.field[e.y][e.x].soul = true;
         }
     }
     return std::move(in);
@@ -181,8 +276,8 @@ inline void output(const Output& ou) {
         cout << 3 << endl << static_cast<uint>(ou.sk);
         switch(ou.sk) {
         case SKILL::SONIC: break;
-        case SKILL::TORNADO: cout << " " << ou.val1 << endl;
-        default: cout << " " << ou.val1 << " " << ou.val2 << endl;
+        case SKILL::TORNADO: cout << " " << ou.val1; break;
+        default: cout << " " << ou.val1 << " " << ou.val2;
         }
         cout << endl;
     }
@@ -194,73 +289,39 @@ inline void output(const Output& ou) {
 }
 
 /* main */
-inline bool isStoneMovable(Status& st, const int y, const int x, DIR d) {
-    auto& p = dir2p(d);
-    auto& ff = st.field[y + p.y][x + p.x];
-    if(ff.type != FIELD::FLOOR) { return false; }
-    if(ff.dog) { return false; }
-    if(any_of(begin(ff.chara), end(ff.chara), [](bool b) { return b; })) { return false; }
-    return true;
-}
-
-inline void newStone(Status& st, const int y, const int x) {
-    st.field[y][x].type = FIELD::ROCK;
-}
-
-inline void deleteStone(Status& st, const int y, const int x) {
-    st.field[y][x].type = FIELD::FLOOR;
-}
-
-inline void moveStone(Status& st, const int y1, const int x1, const int y2, const int x2) {
-    deleteStone(st, y1, x1);
-    newStone(st, y2, x2);
-}
-
-inline void moveStone(Status& st, const int y1, const int x1, DIR d) {
-    deleteStone(st, y1, x1);
-    auto& p = dir2p(d);
-    newStone(st, y1 + p.y, x1 + p.x);
-}
-
-inline void backStone(Status& st, const int y1, const int x1, DIR d) {
-    deleteStone(st, y1, x1);
-    auto& p = dir2p(3 - static_cast<uint>(d));
-    newStone(st, y1 + p.y, x1 + p.x);
-}
-
-inline void moveChara(Status& st, const uid_t id, DIR d) {
-    auto& ch = st.ninja[id];
-    st.field[ch.y][ch.x].chara[id] = false;
-    auto& p = dir2p(d);
-    ch.y += p.y;
-    ch.x += p.x;
-    auto& f = st.field[ch.y][ch.x];
-    if(f.type == FIELD::ROCK) { moveStone(st, f.y, f.x, d); }
-    f.chara[id] = true;
-}
-
-inline bool isMoveable(Status& st, const int y, const int x, DIR d) {
-    auto& p = dir2p(d);
-    auto& f = st.field[y + p.y][x + p.x];
-    if(f.type == FIELD::WALL) { return false; }
-    if(f.threat) { return false; }
-    if(f.type == FIELD::ROCK) {
-        if(!isStoneMovable(st, f.y, f.x, d)) { return false; }
+bool route(vector<DIR>&, Status&, const int, const int, const int, const int, int);
+inline bool check_closed(const int y, const int x, Status& st, int limit) {
+    int r = limit;
+    for(auto dy = max(y - r, 1); dy <= min(y + r, st.h - 2); dy++) {
+        auto rx = r - abs(y - dy);
+        for(auto dx = max(x - rx, 1); dx <= min(x + rx, st.w - 2); dx++) {
+            auto& f = st.field[dy][dx];
+            if(f.type == FIELD::WALL) { continue; }
+            if(f.threat) { continue; }
+            std::vector<DIR> mv;
+            if(route(mv, st, y, x, dy, dx, limit)) {
+                return false;
+            }
+        }
     }
     return true;
 }
-
+inline bool check_closed(const uid_t id, Status& st, int limit) {
+    auto& ch = st.ninja[id];
+    return check_closed(ch.y, ch.x, st, limit);
+}
 
 auto route_value(Status& st, const int sy, const int sx, const int dy, const int dx, int r, int limit) {
     vector<DIR> cond;
-    pair<DIR, int> res = {DIR::NONE, -INF};
+    pair<pair<DIR, DIR>, int> res = {{DIR::NONE, DIR::NONE}, -INF};
     if(sy == dy && sx == dx) {
         if(r < limit) {
-            bool flag = true;
+            /*bool flag = true;
             for(uint i = 0; i < 5; i++) {
                 if(isMoveable(st, dy, dx, static_cast<DIR>(i))) { flag = false; break; }
             }
-            if(flag) { return res; }
+            if(flag) { return res; }*/
+            if(check_closed(dy, dx, st, limit - r)) { return res; }
         }
         res.second = 100;
         return res;
@@ -275,23 +336,42 @@ auto route_value(Status& st, const int sy, const int sx, const int dy, const int
         auto& f = st.field[sy + dp.y][sx + dp.x];
         if(f.type == FIELD::WALL) { continue; }
         if(r + 1 == limit && f.threat) { continue; }
+        /*if(r + 1 == limit) {
+            bool flag = true;
+            for(uint i = 0; i < 5; i++) {
+                if(isMoveable(st, f.y, f.x, static_cast<DIR>(i))) { flag = false; break; }
+            }
+            if(flag) {continue; }
+        }*/
+        bool ms = false;
         if(f.type == FIELD::ROCK) {
             if(!isStoneMovable(st, f.y, f.x, c)) { continue; }
             moveStone(st, f.y, f.x, c);
+            ms = true;
         }
         auto p = route_value(st, f.y, f.x, dy, dx, r + 1, limit);
-        if(f.type == FIELD::ROCK) {
-            backStone(st, f.y, f.x, c);
+        if(ms) {
+            p.second -= 10;
+            auto& q = backStone(st, f.y, f.x, c);
+            auto& ff = st.field[f.y + q.y][f.x + q.x];
+            if(ff.soul) {
+                bool flag = true;
+                for(uint i = 0; i < 4; i++) {
+                    if(isStoneMovable(st, ff.y, ff.x, static_cast<DIR>(i))) { flag = false; break; }
+                }
+                if(flag) { p.second = -INF; }
+            }
         }
+        if(f.dog) { p.second -= 100; }
         if(p.second > res.second) {
-            res.first = c;
+            res.first = make_pair(c, p.first.first);
             res.second = p.second;
         }
     }
     return res;
 }
 
-auto route(vector<DIR>& mv, Status& st, const int sy, const int sx, const int dy, const int dx, int limit) {
+bool route(vector<DIR>& mv, Status& st, const int sy, const int sx, const int dy, const int dx, int limit) {
     vector<DIR> cond;
     if(sy == dy && sx == dx) { return false; }
     DIR diry = (sy < dy ? DIR::DOWN : DIR::UP);
@@ -299,21 +379,33 @@ auto route(vector<DIR>& mv, Status& st, const int sy, const int sx, const int dy
     if(sy != dy) { cond.push_back(diry); }
     if(sx != dx) { cond.push_back(dirx); }
     
-    pair<DIR, int> res = {DIR::NONE, -INF};
+    pair<pair<DIR, DIR>, int> res = {{DIR::NONE, DIR::NONE}, -INF};
     DIR resdir = DIR::NONE;
     for(auto&& c : cond) {
         auto& dp = dir2p(c);
         auto& f = st.field[sy + dp.y][sx + dp.x];
         if(f.type == FIELD::WALL) { continue; }
+        if(limit == 1 && f.threat) { continue; }
+        bool ms = false;
         if(f.type == FIELD::ROCK) {
             if(!isStoneMovable(st, f.y, f.x, c)) { continue; }
             moveStone(st, f.y, f.x, c);
+            ms = true;
         }
-        if(limit == 1 && f.threat) { continue; }
         auto p = route_value(st, f.y, f.x, dy, dx, 1, limit);
-        if(f.type == FIELD::ROCK) {
-            backStone(st, f.y, f.x, c);
+        if(ms) {
+            p.second -= 10;
+            auto& q = backStone(st, f.y, f.x, c);
+            auto& ff = st.field[f.y + q.y][f.x + q.x];
+            if(ff.soul) {
+                bool flag = true;
+                for(uint i = 0; i < 4; i++) {
+                    if(isStoneMovable(st, ff.y, ff.x, static_cast<DIR>(i))) { flag = false; break; }
+                }
+                if(flag){ p.second = -INF; }
+            }
         }
+        if(f.dog) { p.second -= 100; }
         if(p.second > res.second) {
             res = p;
             resdir = c;
@@ -321,7 +413,8 @@ auto route(vector<DIR>& mv, Status& st, const int sy, const int sx, const int dy
     }
     if(resdir == DIR::NONE) { return false; }
     mv.push_back(resdir);
-    if(res.first != DIR::NONE && limit > 1) { mv.push_back(res.first); }
+    if(res.first.first != DIR::NONE && limit > 1) { mv.push_back(res.first.first); }
+    if(res.first.second != DIR::NONE && limit > 2) { mv.push_back(res.first.second); }
     return true;
 }
 
@@ -330,32 +423,57 @@ auto brain(const uid_t id, Input& in, uint limit = 2) {
     auto& st = in.st[0];
     auto& ch = st.ninja[id];
 
-    sort(st.souls.begin(), st.souls.end(), [&](const Soul& s1, const Soul& s2) {
-        if(s1.reserve) { return false; }
-        if(s2.reserve) { return true; }
-        return dist(s1.y, s1.x, ch.y, ch.x) < dist(s2.y, s2.x, ch.y, ch.x);
-    });
-
-    for(auto&& s : st.souls) {
-        if(s.reserve) { break; }
-        if(route(mv, st, ch.y, ch.x, s.y, s.x, limit - mv.size())) {
-            for(auto&& m : mv) { moveChara(st, id, m); }
-            s.reserve = true;
-            if(mv.size() == limit) { break; }
+    while(true) {
+        sort(st.souls.begin(), st.souls.end(), [&](const Soul& s1, const Soul& s2) {
+            if(s1.reserve) { return false; }
+            if(s2.reserve) { return true; }
+            if(id == 0) {
+                auto& ch2 = st.ninja[1];
+                if(dist(s1.y, s1.x, ch2.y, ch2.x) < dist(s1.y, s1.x, ch.y, ch.x)) { return false; }
+                if(dist(s2.y, s2.x, ch2.y, ch2.x) < dist(s2.y, s2.x, ch.y, ch.x)) { return true; }
+            }
+            return dist(s1.y, s1.x, ch.y, ch.x) < dist(s2.y, s2.x, ch.y, ch.x);
+        });
+        bool next = false;
+        for(auto&& s : st.souls) {
+            if(s.reserve) { break; }
+            if(id == 0) {
+                auto& ch2 = st.ninja[1];
+                if(dist(s.y, s.x, ch2.y, ch2.x) < dist(s.y, s.x, ch.y, ch.x)) { continue; }
+            }
+            if(route(mv, st, ch.y, ch.x, s.y, s.x, limit - mv.size())) {
+                for(auto&& m : mv) { moveChara(st, id, m); }
+                s.reserve = true;
+                if(mv.size() < limit) { next = true; }
+                break;
+            }
         }
+        if(!next) { break; }
     }
 
     if(mv.size() < limit) {
-        for(uint i = 0; i < 4; i++) {
-            auto& p = dir2p(i);
-            auto& f = st.field[ch.y + p.y][ch.x + p.x];
-            if(f.type == FIELD::WALL) { continue; }
-            if(f.type == FIELD::ROCK) {
-                if(!isStoneMovable(st, f.y, f.x, static_cast<DIR>(i))) { continue; }
+        int r = limit;
+        vector<pair<int, Point>> cond;
+        for(auto dy = max(ch.y - r, 1); dy <= min(ch.y + r, st.h - 2); dy++) {
+            auto rx = r - abs(ch.y - dy);
+            for(auto dx = max(ch.x - rx, 1); dx <= min(ch.x + rx, st.w - 2); dx++) {
+                auto& f = st.field[dy][dx];
+                if(f.type == FIELD::WALL) { continue; }
+                if(f.threat) { continue; }
+                cond.emplace_back(calcAround(st, f.y, f.x), Point{dy, dx});
             }
-            if(f.threat) { continue; }
-            mv.push_back(static_cast<DIR>(i));
-            break;
+        }
+        sort(cond.begin(), cond.end(), [](const auto& p1, const auto& p2) {
+            if(p1.first == p2.first) {
+                return abs(p2.second.y + p2.second.x) < abs(p1.second.y + p1.second.x);
+            }
+            return p1.first < p2.first;
+        });
+        for(auto&& e : cond) {
+            if(route(mv, st, ch.y, ch.x, e.second.y, e.second.x, limit - mv.size())) {
+                for(auto&& m : mv) { moveChara(st, id, m); }
+                break;
+            }
         }
         if(mv.empty()) {
             mv.push_back(DIR::NONE);
@@ -364,20 +482,84 @@ auto brain(const uid_t id, Input& in, uint limit = 2) {
     return std::move(mv);
 }
 
-inline bool check_closed(const uid_t id, Input& in) {
-    
-    return false;
+inline auto escape_closed(Input& in, Output& ou, const uid_t id) {
+    auto& st = in.st[0];
+    auto& ch = st.ninja[id];
+    if(st.nin >= in.getCost(SKILL::TORNADO)) {
+        auto dogs = calcAroundDog(st, ch.y, ch.x);
+        auto exec = in.getCost(SKILL::TORNADO) < 15 && dogs > 2;
+        exec = exec || dogs > 3;
+        if(exec) {
+            for(uint i = 0; i < 8; i++) {
+                auto& p = dir2p8(i);
+                auto& f = st.field[ch.y + p.y][ch.x + p.x];
+                if(f.dog) { deleteDog(st, f.y, f.x); }
+            }
+            ou.val1 = id;
+            return ou.sk = SKILL::TORNADO;
+        }
+    }
+    if(st.nin >= in.getCost(SKILL::SONIC) && !check_closed(id, st, 3)) {
+        return ou.sk = SKILL::SONIC;
+    }
+    if(st.nin >= in.getCost(SKILL::MYTHUNDER)) {
+        for(auto dy = max(ch.y - 2, 1); dy <= min(ch.y + 2, st.h - 2); dy++) {
+            auto rx = 2 - abs(ch.y - dy);
+            for(auto dx = max(ch.x - rx, 1); dx <= min(ch.x + rx, st.w - 2); dx++) {
+                auto& f = st.field[dy][dx];
+                if(f.type != FIELD::ROCK) { continue; }
+                deleteStone(st, dy, dx);
+                if(!check_closed(id, st, 2)) {
+                    ou.val1 = dy;
+                    ou.val2 = dx;
+                    return ou.sk = SKILL::MYTHUNDER;
+                }
+                newStone(st, dy, dx);
+            }
+        }
+    }
+    if(st.nin >= in.getCost(SKILL::TORNADO) && calcAroundDog(st, ch.y, ch.x) > 0) {
+        for(uint i = 0; i < 8; i++) {
+            auto& p = dir2p8(i);
+            auto& f = st.field[ch.y + p.y][ch.x + p.x];
+            if(f.dog) { deleteDog(st, f.y, f.x); }
+        }
+        ou.val1 = id;
+        return ou.sk = SKILL::TORNADO;
+    }
+    if(st.nin >= in.getCost(SKILL::MYGHOST)) {
+        ou.val1 = ch.y;
+        ou.val2 = ch.x;
+        for(uint i = 0; i < 4; i++) {
+            auto& p = dir2p(i);
+            auto& f = st.field[ch.y + p.y][ch.x + p.x];
+            if(f.dog) { deleteDog(st, f.y, f.x); }
+        }
+        st.field[ch.y][ch.x].threat++;
+        /* TODO; update threat, dog */
+        return ou.sk = SKILL::MYGHOST;
+    }
+    return ou.sk;
 }
 
-
 auto resolve(Input& in) {
-    auto& me = in.st[0];
+    auto& st = in.st[0];
+    bool settle = false;
     Output ou;
     ou.sk = SKILL::NONE;
 
+    if(check_closed(0, st, 2)) {
+        if(escape_closed(in, ou, 0) != SKILL::NONE) { settle = true; }
+    }
     auto limit = (ou.sk == SKILL::SONIC ? 3 : 2);
-    
     ou.mv[0] = brain(0, in, limit);
+    
+    if(!settle) {
+        if(check_closed(1, st, limit)) {
+            if(escape_closed(in, ou, 1) != SKILL::NONE) { settle = true; }
+        }
+    }
+    limit = (ou.sk == SKILL::SONIC ? 3 : 2);
     ou.mv[1] = brain(1, in, limit);
     
     return std::move(ou);
