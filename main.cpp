@@ -1,10 +1,4 @@
 ﻿// nya-n
-
-#if _DEBUG && _MSC_VER
-#define _CRTDBG_MAP_ALLOC
-#include <crtdbg.h>
-#endif
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -14,7 +8,7 @@
 #include <algorithm>
 #include <iterator>
 
-using namespace std;
+using namespace std; // (>_<)
 
 /* type */
 typedef unsigned int uint;
@@ -41,14 +35,14 @@ enum class FIELD : char {
 };
 
 enum class SKILL : uint {
-    SONIC = 0,
-    MYMATEOR,
-    OPMATEOR,
-    MYTHUNDER,
-    OPTHUNDER,
-    MYGHOST,
-    OPGHOST,
-    TORNADO,
+    SONIC = 0,  // [1, 8]
+    MYMATEOR,   // [3, 7]
+    OPMATEOR,   // [3, 7]
+    MYTHUNDER,  // [3, 7]
+    OPTHUNDER,  // [1, 5]
+    MYGHOST,    // [2, 4]
+    OPGHOST,    // [2, 4]
+    TORNADO,    // [6, 30]
     NONE
 };
 
@@ -84,6 +78,13 @@ inline auto dir2char(uint d) {
     return table[d];
 }
 inline auto dir2char(DIR d) { return dir2char(static_cast<uint>(d)); }
+inline auto opdir(uint d) { return 3 - d; }
+inline auto opdir(DIR d) { return static_cast<DIR>(opdir(static_cast<uint>(d))); }
+inline auto rotdir(uint d) {
+    static const vector<uint> table = {2, 0, 3, 1, 4};
+    return table[d];
+}
+inline auto rotdir(DIR d) { static_cast<DIR>(rotdir(static_cast<uint>(d))); }
 
 inline auto dist(int y1, int x1, int y2, int x2) { return abs(y1 - y2) + abs(x1 - x2); }
 
@@ -118,27 +119,50 @@ struct Status {
     vector<Chara> dogs;
     vector<uint> cnt;
     int neardog = INF;
+    inline auto& getField(const int y, const int x, uint d) {
+        auto& p = dir2p(d);
+        return field[y + p.y][x + p.x];
+    }
+    inline auto& getField(const int y, const int x, DIR d) {
+        return getField(y, x, static_cast<uint>(d));
+    }
+    template <class F>
+    inline void eachField(F& f) {
+        for(auto& fy : field) { for(auto& fxy : fy) { f(fxy); } }
+    }
 };
 
 struct Input {
     uint time;
     vector<uint> costs;
     Status st[2];
-    const uint getCost(SKILL sk) const { return costs[static_cast<uint>(sk)]; }
+    inline const uint getCost(SKILL sk) const { return costs[static_cast<uint>(sk)]; }
 };
 
 struct Output {
-    SKILL sk;
-    uint val1, val2;
+    SKILL sk = SKILL::NONE;
+    uint val1 = 0, val2 = 0;
     vector<DIR> mv[2];
 };
 
+/* func */
 inline bool isStoneMovable(Status& st, const int y, const int x, DIR d) {
-    auto& p = dir2p(d);
-    auto& ff = st.field[y + p.y][x + p.x];
-    if(ff.type != FIELD::FLOOR) { return false; }
-    if(ff.dog) { return false; }
-    if(any_of(begin(ff.chara), end(ff.chara), [](bool b) { return b; })) { return false; }
+    auto& f = st.getField(y, x, d);
+    if(f.type != FIELD::FLOOR || f.dog) { return false; }
+    if(f.chara[0] || f.chara[1]) { return false; }
+    return true;
+}
+
+inline bool isStoneMovable(Status& st, const int y, const int x, uint d) {
+    return isStoneMovable(st, y, x, static_cast<DIR>(d));
+}
+
+inline bool isMoveable(Status& st, const int y, const int x, DIR d) {
+    auto& f = st.getField(y, x, d);
+    if(f.type == FIELD::WALL || f.threat) { return false; }
+    if(f.type == FIELD::ROCK) {
+        if(!isStoneMovable(st, f.y, f.x, d)) { return false; }
+    }
     return true;
 }
 
@@ -152,7 +176,7 @@ inline int calcAround(Status& st, const int y, const int x) {
         else if(f.type == FIELD::ROCK) {
             around += 2;
             if(i < 4) {
-                if(!isStoneMovable(st, f.y, f.x, static_cast<DIR>(i))) { around++; }
+                if(!isStoneMovable(st, f.y, f.x, i)) { around++; }
             }
         }
     }
@@ -172,8 +196,7 @@ inline int calcAroundDog(Status& st, const int y, const int x) {
 inline void deleteDog(Status& st, const int y, const int x) {
     st.field[y][x].dog = false;
     for(uint i = 0; i < 5; i++) {
-        auto& p = dir2p(i);
-        auto& f = st.field[y + p.y][x + p.x];
+        auto& f = st.getField(y, x, i);
         f.threat--;
     }
 }
@@ -210,17 +233,6 @@ inline auto moveChara(Status& st, const uid_t id, DIR d) {
     if(f.type == FIELD::ROCK) { moveStone(st, f.y, f.x, d); }
     f.chara[id] = true;
     return p;
-}
-
-inline bool isMoveable(Status& st, const int y, const int x, DIR d) {
-    auto& p = dir2p(d);
-    auto& f = st.field[y + p.y][x + p.x];
-    if(f.type == FIELD::WALL) { return false; }
-    if(f.threat) { return false; }
-    if(f.type == FIELD::ROCK) {
-        if(!isStoneMovable(st, f.y, f.x, d)) { return false; }
-    }
-    return true;
 }
 
 /* IO */
@@ -265,8 +277,7 @@ auto input() {
             st.field[q.second.y][q.second.x].visit = q.first;
             if(st.field[q.second.y][q.second.x].dog && q.first < 5) { st.neardog++; }
             for(uint i = 0; i < 4; i++) {
-                auto& p = dir2p(i);
-                auto& f = st.field[q.second.y + p.y][q.second.x + p.x];
+                auto& f = st.getField(q.second.y, q.second.x, i);
                 if(f.type != FIELD::FLOOR) { continue; }
                 if(f.visit != -INF && f.visit <= q.first + 1) { continue; }
                 que.push(make_pair(q.first + 1, Point{f.y, f.x}));
@@ -276,8 +287,7 @@ auto input() {
         for(auto&& e : st.dogs) {
             st.field[e.y][e.x].dog = true;
             for(uint i = 0; i < 5; i++) {
-                auto p = dir2p(i);
-                st.field[e.y + p.y][e.x + p.x].threat++;
+                st.getField(e.y, e.x, i).threat++;
             }
         }
         for(auto&& e : st.souls) {
@@ -315,12 +325,9 @@ inline bool check_closed(const int y, const int x, Status& st, int limit) {
         auto rx = r - abs(y - dy);
         for(auto dx = max(x - rx, 1); dx <= min(x + rx, st.w - 2); dx++) {
             auto& f = st.field[dy][dx];
-            if(f.type == FIELD::WALL) { continue; }
-            if(f.threat) { continue; }
+            if(f.type == FIELD::WALL || f.threat) { continue; }
             std::vector<DIR> mv;
-            if(route(mv, st, y, x, dy, dx, limit)) {
-                return false;
-            }
+            if(route(mv, st, y, x, dy, dx, limit)) { return false; }
         }
     }
     return true;
@@ -330,38 +337,16 @@ inline bool check_closed(const uid_t id, Status& st, int limit) {
     return check_closed(ch.y, ch.x, st, limit);
 }
 
-auto route_value(Status& st, const int sy, const int sx, const int dy, const int dx, int r, int limit) {
+template <class F>
+inline void route_helper(Status& st, const int sy, const int sx, const int dy, const int dx, int r, int limit, F& updater) {
     vector<DIR> cond;
-    pair<pair<DIR, DIR>, int> res = {{DIR::NONE, DIR::NONE}, -INF};
-    if(sy == dy && sx == dx) {
-        if(r < limit) {
-            /*bool flag = true;
-            for(uint i = 0; i < 5; i++) {
-                if(isMoveable(st, dy, dx, static_cast<DIR>(i))) { flag = false; break; }
-            }
-            if(flag) { return res; }*/
-            if(check_closed(dy, dx, st, limit - r)) { return res; }
-        }
-        res.second = 100;
-        return res;
-    }
-    DIR diry = (sy < dy ? DIR::DOWN : DIR::UP);
-    DIR dirx = (sx < dx ? DIR::RIGHT : DIR::LEFT);
-    if(sy != dy) { cond.push_back(diry); }
-    if(sx != dx) { cond.push_back(dirx); }
+    if(sy != dy) { cond.push_back(sy < dy ? DIR::DOWN : DIR::UP); }
+    if(sx != dx) { cond.push_back(sx < dx ? DIR::RIGHT : DIR::LEFT); }
 
     for(auto&& c : cond) {
-        auto& dp = dir2p(c);
-        auto& f = st.field[sy + dp.y][sx + dp.x];
+        auto& f = st.getField(sy, sx, c);
         if(f.type == FIELD::WALL) { continue; }
         if(r + 1 == limit && f.threat) { continue; }
-        /*if(r + 1 == limit) {
-            bool flag = true;
-            for(uint i = 0; i < 5; i++) {
-                if(isMoveable(st, f.y, f.x, static_cast<DIR>(i))) { flag = false; break; }
-            }
-            if(flag) {continue; }
-        }*/
         bool ms = false;
         if(f.type == FIELD::ROCK) {
             if(!isStoneMovable(st, f.y, f.x, c)) { continue; }
@@ -376,60 +361,44 @@ auto route_value(Status& st, const int sy, const int sx, const int dy, const int
             if(ff.soul) {
                 bool flag = true;
                 for(uint i = 0; i < 4; i++) {
-                    if(isStoneMovable(st, ff.y, ff.x, static_cast<DIR>(i))) { flag = false; break; }
+                    if(isStoneMovable(st, ff.y, ff.x, i)) { flag = false; break; }
                 }
                 if(flag) { p.second = -INF; }
             }
         }
         if(f.dog) { p.second -= 100; }
+        updater(p, c);
+    }
+}
+
+auto route_value(Status& st, const int sy, const int sx, const int dy, const int dx, int r, int limit) {
+    pair<pair<DIR, DIR>, int> res = {{DIR::NONE, DIR::NONE}, -INF};
+    if(sy == dy && sx == dx) {
+        if(r < limit) {
+            if(check_closed(dy, dx, st, limit - r)) { return res; }
+        }
+        res.second = 100;
+        return res;
+    }
+    route_helper(st, sy, sx, dy, dx, r, limit, [&](pair<pair<DIR, DIR>, int>& p, DIR& c) {
         if(p.second > res.second) {
             res.first = make_pair(c, p.first.first);
             res.second = p.second;
         }
-    }
+    });
     return res;
 }
 
 bool route(vector<DIR>& mv, Status& st, const int sy, const int sx, const int dy, const int dx, int limit) {
-    vector<DIR> cond;
-    if(sy == dy && sx == dx) { return false; }
-    DIR diry = (sy < dy ? DIR::DOWN : DIR::UP);
-    DIR dirx = (sx < dx ? DIR::RIGHT : DIR::LEFT);
-    if(sy != dy) { cond.push_back(diry); }
-    if(sx != dx) { cond.push_back(dirx); }
-    
     pair<pair<DIR, DIR>, int> res = {{DIR::NONE, DIR::NONE}, -INF};
     DIR resdir = DIR::NONE;
-    for(auto&& c : cond) {
-        auto& dp = dir2p(c);
-        auto& f = st.field[sy + dp.y][sx + dp.x];
-        if(f.type == FIELD::WALL) { continue; }
-        if(limit == 1 && f.threat) { continue; }
-        bool ms = false;
-        if(f.type == FIELD::ROCK) {
-            if(!isStoneMovable(st, f.y, f.x, c)) { continue; }
-            moveStone(st, f.y, f.x, c);
-            ms = true;
-        }
-        auto p = route_value(st, f.y, f.x, dy, dx, 1, limit);
-        if(ms) {
-            p.second -= 10;
-            auto& q = backStone(st, f.y, f.x, c);
-            auto& ff = st.field[f.y + q.y][f.x + q.x];
-            if(ff.soul) {
-                bool flag = true;
-                for(uint i = 0; i < 4; i++) {
-                    if(isStoneMovable(st, ff.y, ff.x, static_cast<DIR>(i))) { flag = false; break; }
-                }
-                if(flag){ p.second = -INF; }
-            }
-        }
-        if(f.dog) { p.second -= 100; }
+    if(sy == dy && sx == dx) { return false; }
+    route_helper(st, sy, sx, dy, dx, 0, limit, [&](pair<pair<DIR, DIR>, int>& p, DIR& c) {
         if(p.second > res.second) {
             res = p;
             resdir = c;
         }
-    }
+    });
     if(resdir == DIR::NONE) { return false; }
     mv.push_back(resdir);
     if(res.first.first != DIR::NONE && limit > 1) { mv.push_back(res.first.first); }
@@ -551,15 +520,6 @@ inline auto escape_closed(Input& in, Output& ou, const uid_t id) {
         return ou.sk = SKILL::TORNADO;
     }
     if(st.nin >= in.getCost(SKILL::MYGHOST)) {
-        /*ou.val1 = ch.y;
-        ou.val2 = ch.x;
-        for(uint i = 0; i < 4; i++) {
-            auto& p = dir2p(i);
-            auto& f = st.field[ch.y + p.y][ch.x + p.x];
-            if(f.dog) { deleteDog(st, f.y, f.x); }
-        }
-        st.field[ch.y][ch.x].threat++;
-        return ou.sk = SKILL::MYGHOST; */
         int far = -INF, fary = -1, farx = -1;
         for(auto&& fy : st.field) {
             for(auto&& fxy : fy) {
@@ -596,22 +556,18 @@ void find_critical(Input& in, Output& ou) {
                     }
                 }
                 if(dir == DIR::NONE) { continue; }
-                auto& p = dir2p(dir);
-                auto& q = dir2p(3 - static_cast<uint>(dir));
-                auto& fp = op.field[s.y + p.y][s.x + p.x];
-                auto& fq = op.field[s.y + q.y][s.x + q.x];
-                if(fp.type != FIELD::FLOOR || fp.soul || fp.dog || 
-                    any_of(begin(fp.chara), end(fp.chara), [](bool b) { return b; })) { 
-                    if(fq.type != FIELD::FLOOR || fq.soul || fq.dog ||
-                        any_of(begin(fq.chara), end(fq.chara), [](bool b) { return b; })) {
-                        ou.val1 = s.y + q.y;
-                        ou.val2 = s.x + q.x;
+                auto& fp = op.getField(s.y, s.x, dir);
+                auto& fq = op.getField(s.y, s.x, opdir(dir));
+                if(fp.type != FIELD::FLOOR || fp.soul || fp.dog || fp.chara[0] || fp.chara[1]) { 
+                    if(fq.type != FIELD::FLOOR || fq.soul || fq.dog || fq.chara[0] || fq.chara[1]) {
+                        ou.val1 = fq.y;
+                        ou.val2 = fq.x;
                         ou.sk = SKILL::OPMATEOR;
                         return;
                     }
                 } else {
-                    ou.val1 = s.y + p.y;
-                    ou.val2 = s.x + p.x;
+                    ou.val1 = fp.y;
+                    ou.val2 = fp.x;
                     ou.sk = SKILL::OPMATEOR;
                     return;
                 }
@@ -629,30 +585,27 @@ void find_critical(Input& in, Output& ou) {
             }
             if(dir == DIR::NONE) { continue; }
             if(isStoneMovable(op, s.y, s.x, dir)) { continue; }
-            auto& p = dir2p(3 - static_cast<uint>(dir));
-            auto& f = op.field[s.y + p.y][s.x + p.x];
+            auto& f = op.getField(s.y, s.x, opdir(dir));
             if(f.type != FIELD::FLOOR || f.soul || f.dog) { continue; }
-            if(any_of(begin(f.chara), end(f.chara), [](bool b) { return b; })) { continue; }
-            ou.val1 = s.y + p.y;
-            ou.val2 = s.x + p.x;
+            if(f.chara[0] || f.chara[1]) { continue; }
+            ou.val1 = f.y;
+            ou.val2 = f.x;
             ou.sk = SKILL::OPMATEOR;
             return;
         }
         for(auto& nj : op.ninja) {
             int ways = 0;
             for(uint i = 0; i < 4; i++) {
-                auto& p = dir2p(i);
-                auto& f = op.field[nj.y + p.y][nj.x + p.x];
+                auto& f = op.getField(nj.y, nj.x, i);
                 if(f.type != FIELD::FLOOR || f.dog || f.threat) { continue; }
                 ++ways;
             }
             if(ways > 1) { continue; }
             for(uint i = 0; i < 4; i++) {
-                auto& p = dir2p(i);
-                auto& f = op.field[nj.y + p.y][nj.x + p.x];
+                auto& f = op.getField(nj.y, nj.x, i);
                 if(f.type != FIELD::FLOOR || f.dog || f.soul || f.threat) { continue; }
-                if(any_of(begin(f.chara), end(f.chara), [](bool b) { return b; })) { continue; }
-                if(isStoneMovable(op, f.y, f.x, static_cast<DIR>(i))) { continue; }
+                if(f.chara[0] || f.chara[1]) { continue; }
+                if(isStoneMovable(op, f.y, f.x, i)) { continue; }
                 ou.val1 = f.y;
                 ou.val2 = f.x;
                 ou.sk = SKILL::OPMATEOR;
@@ -662,38 +615,32 @@ void find_critical(Input& in, Output& ou) {
     }
 
     if(me.nin >= in.getCost(SKILL::OPTHUNDER) + costmin) {
-        for(auto&& fy : op.field) {
-            for(auto&& fxy : fy) {
-                if(fxy.type != FIELD::ROCK) { continue; }
-                for(uint i = 0; i < 2; i++) {
-                    auto& p = dir2p(i);
-                    auto& fp = op.field[fxy.y + p.y][fxy.x + p.x];
-                    if(fp.type != FIELD::FLOOR || fp.visit == -INF) { continue; }
-                    auto& q = dir2p(3-i);
-                    auto& fq = op.field[fxy.y + q.y][fxy.x + q.x];
-                    if(fq.type != FIELD::FLOOR || fq.visit == -INF) { continue; }
-                    if(abs(fp.visit - fq.visit) > 15) {
-                        ou.val1 = fxy.y;
-                        ou.val2 = fxy.x;
-                        ou.sk = SKILL::OPTHUNDER;
-                        return;
-                    }
+        op.eachField([&](Field& f) {
+            if(f.type != FIELD::ROCK) { return; }
+            for(uint i = 0; i < 2; i++) {
+                auto& fp = op.getField(f.y, f.x, i);
+                if(fp.type != FIELD::FLOOR || fp.visit == -INF) { continue; }
+                auto& fq = op.getField(f.y, f.x, opdir(i));
+                if(fq.type != FIELD::FLOOR || fq.visit == -INF) { continue; }
+                if(abs(fp.visit - fq.visit) > 15) {
+                    ou.val1 = f.y;
+                    ou.val2 = f.x;
+                    ou.sk = SKILL::OPTHUNDER;
+                    return;
                 }
             }
-        }
+        });
     }
 
     if(me.nin >= in.getCost(SKILL::MYGHOST) + costmin) {
         int far = -INF, fary = -1, farx = -1;
-        for(auto&& fy : me.field) {
-            for(auto&& fxy : fy) {
-                if(fxy.visit > far) {
-                    far = fxy.visit;
-                    fary = fxy.y;
-                    farx = fxy.x;
-                }
+        me.eachField([&](Field& f) {
+            if(f.visit > far) {
+                far = f.visit;
+                fary = f.y;
+                farx = f.x;
             }
-        } 
+        });
         if(far > 15) {
             ou.val1 = fary;
             ou.val2 = farx;
@@ -711,8 +658,7 @@ auto resolve(Input& in) {
     auto& st = in.st[0];
     bool settle = false;
     Output ou;
-    ou.sk = SKILL::NONE;
-
+    
     if(check_closed(0, st, 2)) {
         if(escape_closed(in, ou, 0) != SKILL::NONE) { settle = true; }
     }
@@ -721,10 +667,8 @@ auto resolve(Input& in) {
     auto limit = (ou.sk == SKILL::SONIC ? 3 : 2);
     ou.mv[0] = brain(0, in, limit);
     
-    if(!settle) {
-        if(check_closed(1, st, limit)) {
-            if(escape_closed(in, ou, 1) != SKILL::NONE) { settle = true; }
-        }
+    if(!settle && check_closed(1, st, limit)) {
+        if(escape_closed(in, ou, 1) != SKILL::NONE) { settle = true; }
     }
     limit = (ou.sk == SKILL::SONIC ? 3 : 2);
     ou.mv[1] = brain(1, in, limit);
@@ -733,14 +677,7 @@ auto resolve(Input& in) {
 }
 
 auto main()-> int {
-
-#if _DEBUG && _MSC_VER
-    // check memory leak (only VS)
-    ::_CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
-#endif
-
     ios::sync_with_stdio(false);
-
     cout << AINAME << endl; cout.flush();
     while(true) { output(resolve(input())); }
 }
