@@ -560,7 +560,7 @@ void findCritical(Output& ou, Input& in) {
     auto& me = in.st[0];
     auto& op = in.st[1];
 
-    uint costmin = min(12u, in.getCost(SKILL::TORNADO));
+    uint costmin = min(12u, in.getCost(SKILL::TORNADO)) + in.getCost(SKILL::OPMATEOR);
 
     if(me.nin >= in.getCost(SKILL::OPGHOST) && op.nin >= in.getCost(SKILL::MYGHOST)) {
         for(auto&& nj : op.ninja) {
@@ -699,11 +699,11 @@ void findCritical(Output& ou, Input& in) {
             }
         }
     }
-
+    /*
     if(me.nin >= in.getCost(SKILL::SONIC) + costmin && in.getCost(SKILL::SONIC) <= 2) {
         ou.sk = SKILL::SONIC;
         return;
-    }
+    }*/
 }
 
 Output resolve(Input in) {
