@@ -327,8 +327,17 @@ inline int cancelClosed(Status& st, const int y, const int x, Move& mv) {
         while(!que.empty()) {
             auto p = que.front(); que.pop();
             auto& f = st.getField(p.first.y, p.first.x, d);
-            if(f.type != FIELD::FLOOR) {
+            if(f.type == FIELD::WALL) {
                 next.emplace(p.first, p.second);
+                continue;
+            }
+            if(f.type == FIELD::ROCK) {
+                auto& ff = st.getField(f.y, f.x, d);
+                if(p.second == -1 && ff.type == FIELD::FLOOR && ff.dog == -1 && !ff.chara[0] && !ff.chara[1] && !ff.soul) {
+                    next.emplace(p.first, k);
+                } else {
+                    next.emplace(p.first, p.second);
+                }
                 continue;
             }
             if(p.second == -1 && f.dog == -1 && !f.chara[0] && !f.chara[1] && !f.soul) {
@@ -382,7 +391,7 @@ inline int evaluate(Status& st, const uid_t id, const int y, const int x) {
         auto&s = st.souls[si];
         if(st.field[s.y][s.x].soul) {
             if(st.field[s.y][s.x].type == FIELD::ROCK && isStoneFixed(st, s.y, s.x)) {
-                score -= 10000;
+                score -= 20000;
             } else if(k == 0) {
                 score -= min(100, (int)pow(dist(s.y, s.x, y, x), 2));
             } else {
@@ -521,7 +530,7 @@ void brain(Input& in, Output& ou, const uid_t id, uint limit) {
     }
     
     vector<ScoredMove> mv2;
-    safeRoute(mv2, me, id, limit, 10, 7);
+    safeRoute(mv2, me, id, limit, 7, 7);
     if(mv2.empty()) { return; }
     sort(mv2.begin(), mv2.end(), [&](const ScoredMove& p1, const ScoredMove& p2) {
         return p1.score > p2.score;
