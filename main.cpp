@@ -285,6 +285,36 @@ inline void moveChara(Status& st, const uid_t id, D d) {
     f.chara[id] = true;
 }
 
+inline bool cancelClosed(Status& st, const uid_t id, Move& mv) {
+    auto& ch = st.ninja[id];
+    queue<pair<Point, bool>> que, next;
+    next.emplace(Point{ch.y, ch.x}, false);
+    for(auto&& d : mv) {
+        next.swap(que);
+        while(!que.empty()) {
+            auto p = que.front(); que.pop();
+            auto& f = st.getField(p.first.y, p.first.x, d);
+            if(f.type != FIELD::FLOOR) {
+                next.emplace(p.first, p.second);
+                continue;
+            }
+            if(!p.second && f.dog == -1 && !f.chara[0] && !f.chara[1] && !f.soul) {
+                if(!isStoneMovable(st, f.y, f.x, d)) {
+                    next.emplace(p.first, true);
+                    continue;
+                }
+            }
+            next.emplace(Point{f.y, f.x}, p.second);
+        }
+    }
+    while(!next.empty()) {
+        auto q = next.front(); next.pop();
+        if(st.field[q.first.y][q.first.x].threat) { return true; }
+    }
+    return false;
+}
+
+
 template <class D, class F>
 inline bool tryMove(Status& st, const int y, const int x, D d, const F& func) {
     if(!isMovable(st, y, x, d)) { return false; }
@@ -444,10 +474,16 @@ Move brain(Input& in, const uid_t id, int limit) {
             }
             vector<pair<int, Move>> vmv;
             if(greedRoute(vmv, me, ch.y, ch.x, s.y, s.x, limit - mv.size())) {
+                for(auto&& v : vmv) { 
+                    if(v.second.size() > limit - mv.size()) {
+                        v.second.resize(limit - mv.size());
+                        if(cancelClosed(me, id, v.second)) { v.first -= INF / 4; }
+                    }
+                }
                 auto it = max_element(vmv.begin(), vmv.end(),
                     [&](const pair<int, Move>& p1, const pair<int, Move>& p2) { return p1.first > p2.first; });
                 auto& v = it->second;
-                if(v.size() > limit - mv.size()) { v.resize(limit - mv.size()); }
+                //if(v.size() > limit - mv.size()) { v.resize(limit - mv.size()); }
                 for(auto&& vv : v) {
                     moveChara(me, id, vv);
                     mv.push_back(vv);
@@ -464,6 +500,9 @@ Move brain(Input& in, const uid_t id, int limit) {
         vector<pair<int, Move>> mv2;
         safeMove(mv2, me, id, r, true);
         if(!mv2.empty()) {
+            for(auto&& v : mv2) {
+                if(cancelClosed(me, id, v.second)) { v.first -= INF / 4; }
+            }
             sort(mv2.begin(), mv2.end(), [&](const pair<int, Move>& p1, const pair<int, Move>& p2) {
                 return p1.first > p2.first;
             });
@@ -559,9 +598,18 @@ bool escapeClosed(Output& ou, Input& in, const uid_t id) {
 void findCritical(Output& ou, Input& in) {
     auto& me = in.st[0];
     auto& op = in.st[1];
+    static auto prevop = op;
+    static bool strict = false;
 
+    if(!strict && prevop.cnt[static_cast<uint>(SKILL::MYGHOST)] < op.cnt[static_cast<uint>(SKILL::MYGHOST)]) {
+        for(auto&& nj : op.ninja) {
+            if(prevop.field[nj.y][nj.x].threat > 0) { strict = true; break; }
+        }
+    }
+    prevop = op;
+    
     uint costmin = min(12u, in.getCost(SKILL::TORNADO)) + in.getCost(SKILL::OPMATEOR);
-
+    
     if(me.nin >= in.getCost(SKILL::OPGHOST) && op.nin >= in.getCost(SKILL::MYGHOST)) {
         for(auto&& nj : op.ninja) {
             if(checkClosed(op, nj.id, 3)) {
@@ -569,6 +617,19 @@ void findCritical(Output& ou, Input& in) {
                 ou.val2 = nj.x;
                 ou.sk = SKILL::OPGHOST;
                 return;
+            }
+        }
+        if(strict) {
+            for(auto& s : op.souls) {
+                if(!op.field[s.y][s.x].threat) { continue; }
+                for(auto& nj : op.ninja) {
+                    if(dist(nj.y, nj.x, s.y, s.x) <= 2) {
+                        ou.val1 = s.y;
+                        ou.val2 = s.x;
+                        ou.sk = SKILL::OPGHOST;
+                        return;
+                    }
+                }
             }
         }
     }
