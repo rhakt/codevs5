@@ -269,7 +269,7 @@ void dogSim(Status& st, const int y, const int x, const int range, const int lim
     for(auto&& e : dog) {
         for(uint i = 0; i < 4; i++) {
             if(!isDogMovable(st, e.second.y, e.second.x, i)) { 
-                st.getField(e.second.y, e.second.x, i).threat++;
+                if(!pre) { st.getField(e.second.y, e.second.x, i).threat++; }
                 continue;
             }
             moveDog(st, e.second.y, e.second.x, e.first, i, pre);
@@ -280,8 +280,10 @@ void dogSim(Status& st, const int y, const int x, const int range, const int lim
     func();
     for(auto it = temp.rbegin(); it != temp.rend(); ++it) {
         backDog(st, it->second.second.y, it->second.second.x, it->second.first, it->first, pre);
-        for(uint i = 0; i < it->first; i++) {
-            st.getField(it->second.second.y, it->second.second.x, i).threat--;
+        if(!pre) { 
+            for(uint i = 0; i < it->first; i++) {
+                st.getField(it->second.second.y, it->second.second.x, i).threat--;
+            }
         }
     }
 }
