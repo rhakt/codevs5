@@ -285,10 +285,11 @@ inline void moveChara(Status& st, const uid_t id, D d) {
     f.chara[id] = true;
 }
 
-inline bool cancelClosed(Status& st, const uid_t id, Move& mv) {
+inline int cancelClosed(Status& st, const uid_t id, Move& mv) {
     auto& ch = st.ninja[id];
-    queue<pair<Point, bool>> que, next;
-    next.emplace(Point{ch.y, ch.x}, false);
+    queue<pair<Point, int>> que, next;
+    next.emplace(Point{ch.y, ch.x}, -1);
+    int k = 0;
     for(auto&& d : mv) {
         next.swap(que);
         while(!que.empty()) {
@@ -298,20 +299,21 @@ inline bool cancelClosed(Status& st, const uid_t id, Move& mv) {
                 next.emplace(p.first, p.second);
                 continue;
             }
-            if(!p.second && f.dog == -1 && !f.chara[0] && !f.chara[1] && !f.soul) {
+            if(p.second == -1 && f.dog == -1 && !f.chara[0] && !f.chara[1] && !f.soul) {
                 if(!isStoneMovable(st, f.y, f.x, d)) {
-                    next.emplace(p.first, true);
+                    next.emplace(p.first, k);
                     continue;
                 }
             }
             next.emplace(Point{f.y, f.x}, p.second);
         }
+        ++k;
     }
     while(!next.empty()) {
         auto q = next.front(); next.pop();
-        if(st.field[q.first.y][q.first.x].threat) { return true; }
+        if(st.field[q.first.y][q.first.x].threat) { return q.second; }
     }
-    return false;
+    return -1;
 }
 
 
@@ -330,13 +332,13 @@ inline bool tryMove(Status& st, const int y, const int x, D d, const F& func) {
 }
 
 bool checkClosed(Status&, const int, const int, const uint);
-void safeMove(vector<pair<int, Move>>&, Status&, const int, const int, uint, bool);
+void safeMove(vector<pair<int, Move>>&, Status&, const int, const int, uint, bool, bool);
 inline int evaluate(Status& st, const int y, const int x) {
     int score = 0;
     int around = 0;
     dogSim(st, y, x, 4, 4, [&]() {
         vector<pair<int, Move>> mv;
-        safeMove(mv, st, y, x, 2, false);
+        safeMove(mv, st, y, x, 2, false, false);
         if(mv.empty()) { score = -INF; }
         //score += mv.size() * 100;
         auto dogc = 0, fc = 0, dogp = 0;
@@ -371,14 +373,14 @@ inline int evaluate(Status& st, const int y, const int x) {
     return score;
 }
 
-void safeMove(vector<pair<int, Move>>& mv, Status& st, const int y, const int x, uint range, bool val) {
+void safeMove(vector<pair<int, Move>>& mv, Status& st, const int y, const int x, uint range, bool val, bool none) {
     if(range == 0) { return; }
-    for(uint i = 0; i < 5; i++) {
+    for(uint i = (none ? 4 : 0); i < 5; i++) {
         tryMove(st, y, x, i, [&](const int yy, const int xx, bool stone) {
             if(range == 1 && st.field[yy][xx].threat) { return; }
             if(range > 1) {
                 vector<pair<int, Move>> mv2;
-                safeMove(mv2, st, yy, xx, range - 1, val);
+                safeMove(mv2, st, yy, xx, range - 1, val, i == 4);
                 auto score = val ? (stone ? -10 : 0) : 0;
                 for(auto&& m : mv2) {
                     m.second.insert(m.second.begin(), static_cast<DIR>(i));
@@ -394,12 +396,12 @@ void safeMove(vector<pair<int, Move>>& mv, Status& st, const int y, const int x,
 
 inline void safeMove(vector<pair<int, Move>>& mv, Status& st, const uid_t id, const uint range, bool val) {
     auto& ch = st.ninja[id];
-    safeMove(mv, st, ch.y, ch.x, range, val);
+    safeMove(mv, st, ch.y, ch.x, range, val, false);
 }
 
 inline bool checkClosed(Status& st, const int y, const int x, const uint range) {
     vector<pair<int, Move>> mv;
-    safeMove(mv, st, y, x, range, false);
+    safeMove(mv, st, y, x, range, false, false);
     return mv.empty();
 }
 
@@ -477,7 +479,7 @@ Move brain(Input& in, const uid_t id, int limit) {
                 for(auto&& v : vmv) { 
                     if(v.second.size() > limit - mv.size()) {
                         v.second.resize(limit - mv.size());
-                        if(cancelClosed(me, id, v.second)) { v.first -= INF / 4; }
+                        if(cancelClosed(me, id, v.second) != -1) { v.first -= INF / 4; }
                     }
                 }
                 auto it = max_element(vmv.begin(), vmv.end(),
@@ -501,7 +503,7 @@ Move brain(Input& in, const uid_t id, int limit) {
         safeMove(mv2, me, id, r, true);
         if(!mv2.empty()) {
             for(auto&& v : mv2) {
-                if(cancelClosed(me, id, v.second)) { v.first -= INF / 4; }
+                if(cancelClosed(me, id, v.second) != -1) { v.first -= INF / 4; }
             }
             sort(mv2.begin(), mv2.end(), [&](const pair<int, Move>& p1, const pair<int, Move>& p2) {
                 return p1.first > p2.first;
@@ -600,6 +602,9 @@ void findCritical(Output& ou, Input& in) {
     auto& op = in.st[1];
     static auto prevop = op;
     static bool strict = false;
+    if(in.time == 300000) {
+        prevop = op;
+    }
 
     if(!strict && prevop.cnt[static_cast<uint>(SKILL::MYGHOST)] < op.cnt[static_cast<uint>(SKILL::MYGHOST)]) {
         for(auto&& nj : op.ninja) {
@@ -634,10 +639,44 @@ void findCritical(Output& ou, Input& in) {
         }
     }
 
+    if(me.nin >= in.getCost(SKILL::OPMATEOR)) {
+        for(auto& nj : op.ninja) {
+            vector<pair<int, Move>> mv;
+            DIR d = DIR::NONE;
+            safeMove(mv, op, nj.id, 2, false);
+            if(mv.size() == 1) {
+                auto k = cancelClosed(op, nj.id, mv[0].second);
+                if(k == -1) { continue; }
+                int y = nj.y, x = nj.x;
+                for(int i = 0; i < k; i++) {
+                    auto& f = op.getField(y, x, mv[0].second[i]);
+                    y = f.y; x = f.x;
+                }
+                auto& f = op.getField(y, x, mv[0].second[k]);
+                ou.val1 = f.y;
+                ou.val2 = f.x;
+                ou.sk = SKILL::OPMATEOR;
+                return;
+            } else {
+                for(auto&& m : mv) {
+                    if(cancelClosed(op, nj.id, m.second) != 0) { d = DIR::NONE; break; }
+                    if(d == DIR::NONE) { d = m.second[0]; }
+                    else if(m.second[0] != d) { d = DIR::NONE; break; }
+                }
+                if(d == DIR::NONE) { continue; }
+                auto& f = op.getField(nj.y, nj.x, d);
+                ou.val1 = f.y;
+                ou.val2 = f.x;
+                ou.sk = SKILL::OPMATEOR;
+                return;
+            }
+        }
+    }
+
     if(me.nin >= in.getCost(SKILL::OPMATEOR) + costmin) {
         for(auto& s : op.souls) {
             DIR dir = DIR::NONE;
-            if(s.inRock) {
+            /*if(s.inRock) {
                 for(auto& nj : op.ninja) {
                     if(dist(nj.y, nj.x, s.y, s.x) <= 2 && (nj.y == s.y || nj.x == s.x)) {
                         if(nj.y > s.y) { dir = DIR::UP; } else if(nj.y < s.y) { dir = DIR::DOWN; }
@@ -662,18 +701,21 @@ void findCritical(Output& ou, Input& in) {
                     return;
                 }
                 continue;
-            }
+            }*/
             if(op.field[s.y][s.x].threat) { continue; }
             for(auto& nj : op.ninja) {
                 if(dist(nj.y, nj.x, s.y, s.x) == 2 && (nj.y == s.y || nj.x == s.x)) {
-                    if(nj.y > s.y) { dir = DIR::UP; } else if(nj.y < s.y) { dir = DIR::DOWN; } 
-                    else if(nj.x > s.x) { dir = DIR::LEFT; } else if(nj.x < s.x) { dir = DIR::RIGHT; }
+                    if(nj.y > s.y) { dir = DIR::UP; }
+                    else if(nj.y < s.y) { dir = DIR::DOWN; } 
+                    else if(nj.x > s.x) { dir = DIR::LEFT; }
+                    else if(nj.x < s.x) { dir = DIR::RIGHT; }
                     break;
                 }
             }
             if(dir == DIR::NONE) { continue; }
             if(isStoneMovable(op, s.y, s.x, dir, false)) { continue; }
             if(isStoneMovable(op, s.y, s.x, rotdir(dir), false)) { continue; }
+            if(isStoneMovable(op, s.y, s.x, opdir(rotdir(dir)), false)) { continue; }
             auto& f = op.getField(s.y, s.x, opdir(dir));
             if(f.type != FIELD::FLOOR || f.soul || f.dog != -1) { continue; }
             if(f.chara[0] || f.chara[1]) { continue; }
@@ -682,7 +724,7 @@ void findCritical(Output& ou, Input& in) {
             ou.sk = SKILL::OPMATEOR;
             return;
         }
-        for(auto& nj : op.ninja) {
+        /*for(auto& nj : op.ninja) {
             int ways = 0;
             for(uint i = 0; i < 4; i++) {
                 auto& f = op.getField(nj.y, nj.x, i);
@@ -700,7 +742,7 @@ void findCritical(Output& ou, Input& in) {
                 ou.sk = SKILL::OPMATEOR;
                 return;
             }
-        }
+        }*/
     }
     
     if(me.nin >= in.getCost(SKILL::OPTHUNDER) + costmin) {
@@ -723,7 +765,7 @@ void findCritical(Output& ou, Input& in) {
                 }
             }
         });
-        if(maxd > 12) {
+        if(maxd > 15) {
             ou.sk = SKILL::OPTHUNDER;
             return;
         }
@@ -745,10 +787,10 @@ void findCritical(Output& ou, Input& in) {
             return;
         }
     }*/
-
-    if(in.getCost(SKILL::TORNADO) < 10) {
+    
+    if(me.nin >= in.getCost(SKILL::TORNADO)) {
         for(auto&& ch : me.ninja) {
-            if(me.nin >= in.getCost(SKILL::TORNADO) && calcAroundDog(me, ch.y, ch.x) > 2) {
+            if(in.getCost(SKILL::TORNADO) <= calcAroundDog(me, ch.y, ch.x) * 4) {
                 for(uint i = 0; i < 8; i++) {
                     const auto& p = dir2p8(i);
                     auto& f = me.field[ch.y + p.y][ch.x + p.x];
@@ -760,11 +802,10 @@ void findCritical(Output& ou, Input& in) {
             }
         }
     }
-    /*
     if(me.nin >= in.getCost(SKILL::SONIC) + costmin && in.getCost(SKILL::SONIC) <= 2) {
         ou.sk = SKILL::SONIC;
         return;
-    }*/
+    }
 }
 
 Output resolve(Input in) {
