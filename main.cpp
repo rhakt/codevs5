@@ -176,6 +176,7 @@ struct Output {
     SKILL sk = SKILL::NONE;
     uint val1 = 0, val2 = 0;
     Move mv[2];
+    bool settle = false;
 };
 
 /* func */
@@ -412,12 +413,13 @@ inline int evaluate(Status& st, const uid_t id, const int y, const int x) {
     for(auto&& si : ch.souls) {
         auto&s = st.souls[si];
         if(st.field[s.y][s.x].soul) {
+            auto d = dist(s.y, s.x, y, x);
             if(st.field[s.y][s.x].type == FIELD::ROCK && isStoneFixed(st, s.y, s.x)) {
                 score -= 20000;
             } else if(k == 0) {
-                score -= min(100, (int)pow(dist(s.y, s.x, y, x), 2));
+                score -= min(100, (int)pow(d, 2));
             } else {
-                score += max(0, 100 - (int)pow(dist(s.y, s.x, y, x), 2));
+                score += max(0, 100 - (int)pow(d, 2));
             }
             break;
         }
@@ -432,7 +434,7 @@ void safeMove(vector<ScoredMove>& mv, Status& st, const uid_t id, const int y, c
         tryMove(st, y, x, i, [&](const int yy, const int xx, bool stone, bool soul) {
             if(range == 1 && st.field[yy][xx].threat) { return; }
             auto score = 0;
-            if(soul) { score += 10000; }
+            if(soul) { score += 10000 * depth; }
             if(range > 1) {
                 vector<ScoredMove> mv2;
                 safeMove(mv2, st, id, yy, xx, range - 1, limit, depth, val, i == 4);
@@ -441,7 +443,7 @@ void safeMove(vector<ScoredMove>& mv, Status& st, const uid_t id, const int y, c
                     mv.emplace_back(std::move(m.mv), m.score + score, std::move(m.st), m.y, m.x);
                 }
             } else {
-                auto lim = limit + 2;
+                auto lim = 7;
                 dogSim(st, yy, xx, lim, lim, true, [&]() {
                     score += (val ? evaluate(st, id, yy, xx) : 0);
                     mv.emplace_back(Move{static_cast<DIR>(i)}, score, st, yy, xx);
@@ -474,7 +476,7 @@ void safeRoute(Input& in, Output& ou, vector<ScoredMove>& mv, Status& st, const 
     safeMove(mv1, st, id, y, x, range, range, depth, true, false);
     if(mv1.empty()) { return; }
     if(in.st[1].nin >= in.getCost(SKILL::OPMATEOR)) {
-        bool exec = (ou.sk == SKILL::NONE && st.nin >= in.getCost(SKILL::MYTHUNDER));
+        bool exec = ((ou.sk == SKILL::NONE || !ou.settle) && st.nin >= in.getCost(SKILL::MYTHUNDER));
         for(auto&& mm : mv1) {
             Point neck;
             if(cancelClosed(st, y, x, mm.mv, neck, true) == -1) { continue; }
@@ -483,6 +485,7 @@ void safeRoute(Input& in, Output& ou, vector<ScoredMove>& mv, Status& st, const 
         }
     }
     sort(mv1.begin(), mv1.end(), [&](const ScoredMove& p1, const ScoredMove& p2) {
+        if(p1.score == p2.score) { return p1.mv.size() > p2.mv.size(); }
         return p1.score > p2.score;
     });
     if(mv1.size() > beam) { mv1.resize(beam); }
@@ -503,11 +506,12 @@ void safeRoute(Input& in, Output& ou, vector<ScoredMove>& mv, Status& st, const 
                 if(cancelClosed(st, m.y, m.x, mm.mv, neck) != -1) { mm.score = -INF / 4; }
                 Move m1 = m.mv;
                 for(auto&& m2 : mm.mv) { m1.push_back(m2); }
-                next.emplace_back(std::move(m1), max(m.score + mm.score, -INF), mm.st, mm.y, mm.x, m.sk, m.val1, m.val2);
+                next.emplace_back(std::move(m1), max(m.score * 2 + mm.score, -INF), mm.st, mm.y, mm.x, m.sk, m.val1, m.val2);
             }
         }
         if(next.empty()) { break; }
         sort(next.begin(), next.end(), [&](const ScoredMove& p1, const ScoredMove& p2) {
+            if(p1.score == p2.score) { return p1.mv.size() > p2.mv.size(); }
             return p1.score > p2.score;
         });
         if(next.size() > beam) { next.resize(beam); }
@@ -520,6 +524,42 @@ void safeRoute(Input& in, Output& ou, vector<ScoredMove>& mv, Status& st, const 
 void safeRoute(Input& in, Output& ou, vector<ScoredMove>& mv, Status& st, const uid_t id, const uint range, const uint beam, const uint depth) {
     auto& ch = st.ninja[id];
     safeRoute(in, ou, mv, st, id, ch.y, ch.x, range, beam, depth);
+}
+
+bool greedRoute(Status& st, const int sy, const int sx, const int dy, const int dx) {
+    if(sy == dy && sx == dx) { return true; }
+    vector<DIR> cond;
+    if(sy != dy) { cond.push_back(sy < dy ? DIR::DOWN : DIR::UP); }
+    if(sx != dx) { cond.push_back(sx < dx ? DIR::RIGHT : DIR::LEFT); }
+    bool res = false;
+    for(auto&& c : cond) {
+        auto& f = st.getField(sy, sx, c);
+        tryMove(st, sy, sx, c, [&](const int yy, const int xx, bool stone, bool soul) {
+            if(yy == dy && xx == dx) { res = true; return; }
+            if(!greedRoute(st, yy, xx, dy, dx)) { return; }
+        });
+        if(res) { break; }
+    }
+    return res;
+}
+
+bool greedNeck(Output& ou, Status& st, const int sy, const int sx, const int dy, const int dx) {
+    if(greedRoute(st, sy, sx, dy, dx)) { return true; }
+    for(int y = min(sy, dy); y <= max(sy, dy); y++) {
+        for(int x = min(sx, dx); x <= max(sx, dx); x++) {
+            auto& f = st.field[y][x];
+            if(f.type != FIELD::ROCK) { continue; }
+            deleteStone(st, y, x);
+            if(greedRoute(st, sy, sx, dy, dx)) {
+                ou.sk = SKILL::MYTHUNDER;
+                ou.val1 = y;
+                ou.val2 = x;
+                return true;
+            }
+            newStone(st, y, x);
+        }
+    }
+    return false;
 }
 
 /* main */
@@ -548,21 +588,25 @@ void brain(Input& in, Output& ou, const uid_t id, uint limit) {
         return dist(s1.y, s1.x, ch.y, ch.x) < dist(s2.y, s2.x, ch.y, ch.x);
     });
     auto it = me.souls.begin();
-    while(!it->reserve) {
+    while(!it->reserve && it != me.souls.end()) {
         if(id == 0) {
             auto& ch2 = me.ninja[1];
-            if(dist(ch2.y, ch2.x, it->y, it->x) < dist(ch.y, ch.x, it->y, it->x)) { break; }
+            if(dist(ch2.y, ch2.x, it->y, it->x) < dist(ch.y, ch.x, it->y, it->x)) { ++it; continue; }
         }
         it->reserve = true;
         ch.souls.push_back(distance(me.souls.begin(), it));
         ++it;
-        if(it == me.souls.end()) { break; }
     }
-    
+    if(me.nin >= in.getCost(SKILL::MYTHUNDER) && !ch.souls.empty()) {
+        auto& s = me.souls[ch.souls[0]];
+        greedNeck(ou, me, ch.y, ch.x, s.y, s.x);
+    }
+
     vector<ScoredMove> mv2;
     safeRoute(in, ou, mv2, me, id, limit, 7, 7);
     if(mv2.empty()) { return; }
     sort(mv2.begin(), mv2.end(), [&](const ScoredMove& p1, const ScoredMove& p2) {
+        if(p1.score == p2.score) { return p1.mv.size() > p2.mv.size(); }
         return p1.score > p2.score;
     });
     mv2[0].mv.resize(limit);
@@ -575,7 +619,6 @@ void brain(Input& in, Output& ou, const uid_t id, uint limit) {
         ou.val1 = mv2[0].val1;
         ou.val2 = mv2[0].val2;
     }
-    
     ou.mv[id] = std::move(mv);
 }
 
@@ -843,17 +886,16 @@ void findCritical(Output& ou, Input& in) {
 
 Output resolve(Input in) {
     Output ou;
-    bool settle = false;
     auto& me = in.st[0];
     auto& op = in.st[1];
-    
+
     for(auto& ch : me.ninja) { ch.closed = checkClosed(me, ch.id, 2); }
     
     if(me.ninja[0].closed && me.ninja[1].closed) {
         if(me.nin >= in.getCost(SKILL::SONIC) && in.getCost(SKILL::SONIC) < in.getCost(SKILL::MYGHOST) &&
             !checkClosed(me, 0, 3) && !checkClosed(me, 1, 3)) {
             ou.sk = SKILL::SONIC;
-            settle = true;
+            ou.settle = true;
         } else if(me.nin >= in.getCost(SKILL::MYGHOST)) {
             vector<Point> cond ={{1, 1},{me.h -2 , 1},{me.h - 2, me.w - 2},{1, me.w - 2}};
             bool suc = false;
@@ -868,12 +910,12 @@ Output resolve(Input in) {
                 });
                 if(suc) { break; }
             }
-            if(suc) { ou.sk = SKILL::MYGHOST; settle = true; }
+            if(suc) { ou.sk = SKILL::MYGHOST; ou.settle = true; }
         }
     }
-    if(!settle && me.ninja[0].closed) { settle = escapeClosed(ou, in, 0); }
-    if(!settle && me.ninja[1].closed) { settle = escapeClosed(ou, in, 1); }
-    if(!settle){ findCritical(ou, in); }
+    if(!ou.settle && me.ninja[0].closed) { ou.settle = escapeClosed(ou, in, 0); }
+    if(!ou.settle && me.ninja[1].closed) { ou.settle = escapeClosed(ou, in, 1); }
+    if(!ou.settle) { findCritical(ou, in); }
     
     if(ou.sk == SKILL::MYGHOST) {
         dogSim(me, ou.val1, ou.val2, INF, INF, false, [&]() {
@@ -885,9 +927,8 @@ Output resolve(Input in) {
 
     // chara0
     brain(in, ou, 0, ou.sk == SKILL::SONIC ? 3 : 2);
-
     // chara1
-    //if(!settle && checkClosed(me, 1, 2)) { settle = escapeClosed(ou, in, 1); }
+    if(!ou.settle && checkClosed(me, 1, 2)) { ou.settle = escapeClosed(ou, in, 1); }
     brain(in, ou, 1, ou.sk == SKILL::SONIC ? 3 : 2);
 
     return std::move(ou);
