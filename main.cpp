@@ -503,9 +503,9 @@ void safeRoute(Input& in, Output& ou, vector<ScoredMove>& mv, Status& st, const 
     vector<ScoredMove> mv1;
     safeMove(mv1, st, id, y, x, range, range, depth, true, false);
     if(mv1.empty()) { return; }
-    bool exec = ((ou.sk == SKILL::NONE || !ou.settle) && st.nin >= in.getCost(SKILL::MYTHUNDER));
     bool flag = false;
-    if(in.st[1].nin >= in.getCost(SKILL::OPMATEOR) && exec) {
+    if(in.st[1].nin >= in.getCost(SKILL::OPMATEOR)) {
+        bool exec = ((ou.sk == SKILL::NONE || !ou.settle) && st.nin >= in.getCost(SKILL::MYTHUNDER));
         for(auto&& mm : mv1) {
             if(id == 0 && checkClosed(mm.st, 1, 2)) { continue; }
             Point neck;
@@ -515,7 +515,7 @@ void safeRoute(Input& in, Output& ou, vector<ScoredMove>& mv, Status& st, const 
             mm.score = -INF / 4 + mm.score;
         }
     }
-    if(id == 1 && !flag && (ou.sk == SKILL::NONE || !ou.settle) 
+    if(id == 1 && /*!flag &&*/ (ou.sk == SKILL::NONE || !ou.settle) 
         && st.nin >= in.getCost(SKILL::MYGHOST) + min(10u, in.getCost(SKILL::TORNADO))
         && calcAroundDog(st, y, x) > 0) {
         vector<Point> cond ={{1, 1},{st.h -2 , 1},{st.h - 2, st.w - 2},{1, st.w - 2}};
@@ -557,7 +557,7 @@ void safeRoute(Input& in, Output& ou, vector<ScoredMove>& mv, Status& st, const 
             }
             for(auto&& mm : mv2) {
                 Point neck;
-                if(cancelClosed(st, m.y, m.x, mm.mv, neck) != -1) { mm.score = -INF / 4; }
+                if(cancelClosed(st, m.y, m.x, mm.mv, neck) != -1) { mm.score = -INF / 4 + mm.score; }
                 Move m1 = m.mv;
                 for(auto&& m2 : mm.mv) { m1.push_back(m2); }
                 next.emplace_back(std::move(m1), max(m.score + mm.score, -INF), mm.st, mm.y, mm.x, m.sk, m.val1, m.val2);
