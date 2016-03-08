@@ -177,6 +177,7 @@ struct Output {
     int val1 = 0, val2 = 0;
     Move mv[2];
     bool settle = false;
+    bool cancel = false;
 };
 
 /* func */
@@ -366,7 +367,7 @@ inline int cancelClosed(Status& st, const int y, const int x, Move& mv, Point& p
                     } else {
                         next.emplace(get<0>(q), k, Point{f.y, f.x}, Point{f.y, f.x});
                     }
-                    continue;
+                    //continue;
                 }
             }
             next.emplace(Point{f.y, f.x}, get<1>(q), get<2>(q), get<3>(q));
@@ -375,7 +376,9 @@ inline int cancelClosed(Status& st, const int y, const int x, Move& mv, Point& p
     }
     while(!next.empty()) {
         auto q = next.front(); next.pop();
-        if(st.field[get<0>(q).y][get<0>(q).x].threat) { p = get<2>(q); return get<1>(q); }
+        auto pq = get<0>(q);
+        auto th = st.field[pq.y][pq.x].threat;
+        if(th) { p = get<2>(q); return get<1>(q); }
     }
     return -1;
 }
@@ -501,16 +504,18 @@ void safeRoute(Input& in, Output& ou, vector<ScoredMove>& mv, Status& st, const 
     safeMove(mv1, st, id, y, x, range, range, depth, true, false);
     if(mv1.empty()) { return; }
     bool exec = ((ou.sk == SKILL::NONE || !ou.settle) && st.nin >= in.getCost(SKILL::MYTHUNDER));
+    bool flag = false;
     if(in.st[1].nin >= in.getCost(SKILL::OPMATEOR) && exec) {
         for(auto&& mm : mv1) {
             if(id == 0 && checkClosed(mm.st, 1, 2)) { continue; }
             Point neck;
             if(cancelClosed(st, y, x, mm.mv, neck, true) == -1) { continue; }
+            flag = true;
             if(exec) { mm.sk = SKILL::MYTHUNDER; mm.val1 = neck.y; mm.val2 = neck.x; }
             mm.score = -INF / 4 + mm.score;
         }
     }
-    if(id == 1 && (ou.sk == SKILL::NONE || !ou.settle) 
+    if(id == 1 && !flag && (ou.sk == SKILL::NONE || !ou.settle) 
         && st.nin >= in.getCost(SKILL::MYGHOST) + min(10u, in.getCost(SKILL::TORNADO))
         && calcAroundDog(st, y, x) > 0) {
         vector<Point> cond ={{1, 1},{st.h -2 , 1},{st.h - 2, st.w - 2},{1, st.w - 2}};
@@ -522,7 +527,7 @@ void safeRoute(Input& in, Output& ou, vector<ScoredMove>& mv, Status& st, const 
                 fakeMove(mv3, st, ost, id, y, x, range, range, depth, true, false);
                 for(auto&& mm : mv3) {
                     Point neck;
-                    if(cancelClosed(st, y, x, mm.mv, neck, true) == -1) { continue; }
+                    if(cancelClosed(st, y, x, mm.mv, neck, true) != -1) { continue; }
                     mm.sk = SKILL::MYGHOST; mm.val1 = c.y; mm.val2 = c.x;
                     mv1.push_back(mm);
                 }
@@ -609,6 +614,7 @@ bool greedNeck(Output& ou, Status& st, const int sy, const int sx, const int dy,
                 ou.sk = SKILL::MYTHUNDER;
                 ou.val1 = y;
                 ou.val2 = x;
+                ou.cancel = true;
                 return true;
             }
             newStone(st, y, x);
@@ -968,7 +974,7 @@ Output resolve(Input in) {
     brain(in, ou, 0, ou.sk == SKILL::SONIC ? 3 : 2);
     // chara1
     if(!ou.settle && checkClosed(me, 1, 2)) { ou.settle = escapeClosed(ou, in, 1); }
-    if(ou.sk != SKILL::NONE) { ou.settle = true; }
+    if(ou.sk != SKILL::NONE && !ou.cancel) { ou.settle = true; }
     brain(in, ou, 1, ou.sk == SKILL::SONIC ? 3 : 2);
 
     return std::move(ou);
