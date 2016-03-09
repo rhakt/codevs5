@@ -143,6 +143,7 @@ struct Status {
             eachAround(q.second.y, q.second.x, 4, [&](Field& f) {
                 if(f.type != FIELD::FLOOR) { return; }
                 if(f.distdg != -INF && f.distdg <= q.first + 1) { return; }
+                field[f.y][f.x].distdg = q.first + 1;
                 que.emplace(q.first + 1, Point{f.y, f.x});
             });
         }
@@ -1041,6 +1042,7 @@ Input input() {
             st.eachAround(q.second.y, q.second.x, 4, [&](Field& f) {
                 if(f.type != FIELD::FLOOR) { return; }
                 if(f.distch != -INF && f.distch <= q.first + 1) { return; }
+                st.field[f.y][f.x].distch = q.first + 1;
                 quech.emplace(q.first + 1, Point{f.y, f.x});
             });
         }
