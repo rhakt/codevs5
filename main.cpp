@@ -428,6 +428,14 @@ inline int evaluate(Status& st, const uid_t id, const int y, const int x) {
         }
         ++k;
     }
+    for(auto dy = max(ch.y - 2, 1); dy <= min(ch.y + 2, st.h - 2); dy++) {
+        auto rx = 2 - abs(ch.y - dy);
+        for(auto dx = max(ch.x - rx, 1); dx <= min(ch.x + rx, st.w - 2); dx++) {
+            auto& f = st.field[dy][dx];
+            if(f.dog) { ++around; }
+        }
+    }
+    score -= around * 10;
     return max(score, -INF);
 }
 
@@ -528,6 +536,7 @@ void safeRoute(Input& in, Output& ou, vector<ScoredMove>& mv, Status& st, const 
                 for(auto&& mm : mv3) {
                     Point neck;
                     if(cancelClosed(st, y, x, mm.mv, neck, true) != -1) { continue; }
+                    if(mm.score < 10000) { continue; }
                     mm.sk = SKILL::MYGHOST; mm.val1 = c.y; mm.val2 = c.x;
                     mv1.push_back(mm);
                 }
@@ -658,13 +667,9 @@ void brain(Input& in, Output& ou, const uid_t id, uint limit) {
         ch.souls.push_back(distance(me.souls.begin(), it));
         ++it;
     }
-    if(ou.sk == SKILL::NONE && me.nin >= in.getCost(SKILL::MYTHUNDER) && !ch.souls.empty()) {
-        auto& s = me.souls[ch.souls[0]];
-        greedNeck(ou, me, ch.y, ch.x, s.y, s.x);
-    }
-
+    
     vector<ScoredMove> mv2;
-    safeRoute(in, ou, mv2, me, id, limit, 7, 7);
+    safeRoute(in, ou, mv2, me, id, limit, 10, 7);
     if(mv2.empty()) { return; }
     sort(mv2.begin(), mv2.end(), [&](const ScoredMove& p1, const ScoredMove& p2) {
         if(p1.score == p2.score) { 
@@ -684,6 +689,12 @@ void brain(Input& in, Output& ou, const uid_t id, uint limit) {
         ou.val1 = mv2[0].val1;
         ou.val2 = mv2[0].val2;
     }
+
+    if(ou.sk == SKILL::NONE && me.nin >= in.getCost(SKILL::MYTHUNDER) && !ch.souls.empty()) {
+        auto& s = me.souls[ch.souls[0]];
+        greedNeck(ou, me, ch.y, ch.x, s.y, s.x);
+    }
+
     ou.mv[id] = std::move(mv);
 }
 
@@ -884,7 +895,7 @@ void findCritical(Output& ou, Input& in) {
             return;
         }
     }
-    if(me.nin >= in.getCost(SKILL::OPTHUNDER) + costmin && op.dogs.size() > 5) {
+    if(me.nin >= in.getCost(SKILL::OPTHUNDER) + costmin && op.dogs.size() > 5 && in.getCost(SKILL::OPTHUNDER) <= 3) {
         int maxd = -INF;
         op.eachField([&](Field& f) {
             if(f.type != FIELD::ROCK) { return; }
@@ -894,9 +905,9 @@ void findCritical(Output& ou, Input& in) {
                 auto& fq = op.getField(f.y, f.x, opdir(i));
                 if(fq.type != FIELD::FLOOR || fq.distch == -INF) { continue; }
                 if(fp.dog == -1 && fq.dog == -1) { continue; }
-                if(fp.distch > 3 && fq.distch > 3) { continue; }
-                if(fp.distch > 3 && fp.dog == -1) { continue; }
-                if(fq.distch > 3 && fq.dog == -1) { continue; }
+                if(fp.distch > 2 && fq.distch > 2) { continue; }
+                if(fp.distch > 2 && fp.dog == -1) { continue; }
+                if(fq.distch > 2 && fq.dog == -1) { continue; }
                 if(abs(fp.distch - fq.distch) > maxd) {
                     ou.val1 = f.y;
                     ou.val2 = f.x;
