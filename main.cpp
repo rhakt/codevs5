@@ -731,7 +731,7 @@ void brain(Input& in, Output& ou, const uid_t id, uint limit) {
         && me.nin >= in.getCost(SKILL::MYTHUNDER) + min(10u, in.getCost(SKILL::TORNADO)) 
         && !ch.souls.empty()) {
         auto& s = me.souls[ch.souls[0]];
-        greedNeck(ou, me, ch.y, ch.x, s.y, s.x);
+        if(dist(ch.y, ch.x, s.y, s.x) <= 4) { greedNeck(ou, me, ch.y, ch.x, s.y, s.x); }
     }
 
     ou.mv[id] = std::move(mv);
