@@ -192,11 +192,15 @@ inline bool isStoneMovable(Status& st, const int y, const int x, D d, bool ch = 
     return true;
 }
 
-inline bool isStoneFixed(Status& st, const int y, const int x) {
+inline bool isStoneFixed(Status& st, const int y, const int x, bool sl = false) {
     for(uint i = 0; i < 2; i++) {
         auto& fp = st.getField(y, x, i);
         auto& fq = st.getField(y, x, opdir(i));
-        if(fp.type == FIELD::FLOOR && fq.type == FIELD::FLOOR) { return false; }
+        if(fp.type == FIELD::FLOOR && fq.type == FIELD::FLOOR) {
+            if(fp.soul && !isStoneMovable(st, fp.y, fp.x, i)) { continue; }
+            if(fq.soul && !isStoneMovable(st, fq.y, fq.x, opdir(i))) { continue; }
+            return false;
+        }
     }
     return true;
 }
@@ -441,6 +445,7 @@ inline int evaluate(Status& st, const uid_t id, const int y, const int x) {
 }
 
 void safeMove(vector<ScoredMove>& mv, Status& st, const uid_t id, const int y, const int x, const uint range, const uint limit, const uint depth, bool val, bool none) {
+    auto& ch = st.ninja[id];
     if(range == 0) { return; }
     for(uint i = (none ? 4 : 0); i < 5; i++) {
         tryMove(st, y, x, i, [&](const int yy, const int xx, bool stone, bool soul) {
@@ -455,6 +460,7 @@ void safeMove(vector<ScoredMove>& mv, Status& st, const uid_t id, const int y, c
                     mv.emplace_back(std::move(m.mv), m.score + score, std::move(m.st), m.y, m.x);
                 }
             } else {
+                if(yy == ch.y && x == ch.x) { score -= 100; } 
                 auto lim = limit + 2;
                 dogSim(st, yy, xx, lim, lim, true, [&]() {
                     score += (val ? evaluate(st, id, yy, xx) : 0);
@@ -472,12 +478,14 @@ inline void safeMove(vector<ScoredMove>& mv, Status& st, const uid_t id, const u
 }
 
 void fakeMove(vector<ScoredMove>& mv, Status& st, Status& ost, const uid_t id, const int y, const int x, const uint range, const uint limit, const uint depth, bool val, bool none) {
+    auto& ch = st.ninja[id];
     if(range == 0) { return; }
     for(uint i = (none ? 4 : 0); i < 5; i++) {
         tryMove(st, y, x, i, [&](const int yy, const int xx, bool stone, bool soul) {
             if(stone) { return; }
             if(range == 1 && st.field[yy][xx].threat) { return; }
             if(range == 1 && !ost.field[yy][xx].threat) { return; }
+            if(range == 1 && yy == ch.y && xx == ch.x) { return; }
             auto score = 0;
             if(soul) { score += 10000 * depth; }
             if(range > 1) {
@@ -515,16 +523,32 @@ void safeRoute(Input& in, Output& ou, vector<ScoredMove>& mv, Status& st, const 
     bool flag = false;
     if(in.st[1].nin >= in.getCost(SKILL::OPMATEOR)) {
         bool exec = ((ou.sk == SKILL::NONE || !ou.settle) && st.nin >= in.getCost(SKILL::MYTHUNDER));
+        vector<Point> neckList;
+        int neckc = 0;
         for(auto&& mm : mv1) {
             if(id == 0 && checkClosed(mm.st, 1, 2)) { continue; }
             Point neck;
             if(cancelClosed(st, y, x, mm.mv, neck, true) == -1) { continue; }
             flag = true;
+            ++neckc;
+            if(find_if(neckList.begin(), neckList.end(), [&](const Point& p) {
+                return p.y == neck.y && p.x == neck.x;
+            }) == neckList.end()) {
+                neckList.push_back(neck);
+            }
             if(exec) { mm.sk = SKILL::MYTHUNDER; mm.val1 = neck.y; mm.val2 = neck.x; }
-            mm.score = -INF / 4 + mm.score;
+        }
+        if(neckList.size() < 3) {
+            for(auto&& mm : mv1) {
+                if(mm.sk == SKILL::MYTHUNDER) { mm.score -= 50000; }
+            }
+        } else if(neckc > 0) {
+            for(auto&& mm : mv1) {
+                if(mm.sk == SKILL::MYTHUNDER) { mm.sk = SKILL::NONE; mm.score -= -INF / 4; }
+            }
         }
     }
-    if(id == 1 && /*!flag &&*/ (ou.sk == SKILL::NONE || !ou.settle) 
+    if(id == 1 && !flag && (ou.sk == SKILL::NONE || !ou.settle) 
         && st.nin >= in.getCost(SKILL::MYGHOST) + min(10u, in.getCost(SKILL::TORNADO))
         && calcAroundDog(st, y, x) > 0) {
         vector<Point> cond ={{1, 1},{st.h -2 , 1},{st.h - 2, st.w - 2},{1, st.w - 2}};
@@ -567,7 +591,7 @@ void safeRoute(Input& in, Output& ou, vector<ScoredMove>& mv, Status& st, const 
             }
             for(auto&& mm : mv2) {
                 Point neck;
-                if(cancelClosed(st, m.y, m.x, mm.mv, neck) != -1) { mm.score = -INF / 4 + mm.score; }
+                if(cancelClosed(st, m.y, m.x, mm.mv, neck) != -1) { mm.score -= 20000; }
                 Move m1 = m.mv;
                 for(auto&& m2 : mm.mv) { m1.push_back(m2); }
                 next.emplace_back(std::move(m1), max(m.score + mm.score, -INF), mm.st, mm.y, mm.x, m.sk, m.val1, m.val2);
@@ -602,7 +626,8 @@ bool greedRoute(Status& st, const int sy, const int sx, const int dy, const int 
     bool res = false;
     for(auto&& c : cond) {
         auto& f = st.getField(sy, sx, c);
-        if(f.dog != -1) { continue; }
+        //if(f.threat) { continue; }
+        //if(f.dog != -1) { continue; }
         tryMove(st, sy, sx, c, [&](const int yy, const int xx, bool stone, bool soul) {
             if(yy == dy && xx == dx) { res = true; return; }
             res = greedRoute(st, yy, xx, dy, dx);
@@ -619,6 +644,17 @@ bool greedNeck(Output& ou, Status& st, const int sy, const int sx, const int dy,
             auto& f = st.field[y][x];
             if(f.type != FIELD::ROCK) { continue; }
             if(!isStoneFixed(st, f.y, f.x)) { continue; }
+            bool exec = true;
+            for(uint i = 0; i < 2; i++) {
+                auto& fp = st.getField(f.y, f.x, i);
+                if(fp.type != FIELD::FLOOR) { continue; }
+                auto& fq = st.getField(f.y, f.x, opdir(i));
+                if(fq.type != FIELD::FLOOR) { continue; }
+                if(fp.dog != -1 || fq.dog != -1) { exec = false; break; }
+                if(fp.distch == -INF || fq.distch == -INF) { break; }
+                if(abs(fp.distch - fq.distch) > 15) { exec = false; break; }
+            }
+            if(!exec) { continue; }    
             deleteStone(st, y, x);
             if(greedRoute(st, sy, sx, dy, dx)) {
                 ou.sk = SKILL::MYTHUNDER;
@@ -670,7 +706,7 @@ void brain(Input& in, Output& ou, const uid_t id, uint limit) {
     }
     
     vector<ScoredMove> mv2;
-    safeRoute(in, ou, mv2, me, id, limit, 10, 7);
+    safeRoute(in, ou, mv2, me, id, limit, 7, 7);
     if(mv2.empty()) { return; }
     sort(mv2.begin(), mv2.end(), [&](const ScoredMove& p1, const ScoredMove& p2) {
         if(p1.score == p2.score) { 
@@ -691,7 +727,9 @@ void brain(Input& in, Output& ou, const uid_t id, uint limit) {
         ou.val2 = mv2[0].val2;
     }
 
-    if(ou.sk == SKILL::NONE && me.nin >= in.getCost(SKILL::MYTHUNDER) && !ch.souls.empty()) {
+    if(ou.sk == SKILL::NONE 
+        && me.nin >= in.getCost(SKILL::MYTHUNDER) + min(10u, in.getCost(SKILL::TORNADO)) 
+        && !ch.souls.empty()) {
         auto& s = me.souls[ch.souls[0]];
         greedNeck(ou, me, ch.y, ch.x, s.y, s.x);
     }
@@ -828,16 +866,22 @@ void findCritical(Output& ou, Input& in) {
             if(r != INF) { ou.sk = SKILL::OPGHOST; return; }
         }
     }
-    if(me.nin >= in.getCost(SKILL::OPMATEOR)) {
+    if(me.nin >= min(in.getCost(SKILL::OPMATEOR), in.getCost(SKILL::OPGHOST))) {
         for(auto& nj : op.ninja) {
             vector<ScoredMove> mv;
             safeMove(mv, op, nj.id, 2, 2, 1, false);
             if(mv.size() == 1) {
                 Point neck;
                 if(cancelClosed(op, nj.id, mv[0].mv, neck) == -1) { continue; }
-                ou.val1 = neck.y;
-                ou.val2 = neck.x;
-                ou.sk = SKILL::OPMATEOR;
+                if(in.getCost(SKILL::OPMATEOR) <= in.getCost(SKILL::OPGHOST)) {
+                    ou.val1 = neck.y;
+                    ou.val2 = neck.x;
+                    ou.sk = SKILL::OPMATEOR;
+                } else {
+                    ou.val1 = nj.y;
+                    ou.val2 = nj.x;
+                    ou.sk = SKILL::OPGHOST;
+                }
                 return;
             } else {
                 ou.val1 = ou.val2 = -1;
@@ -849,7 +893,13 @@ void findCritical(Output& ou, Input& in) {
                     ou.val2 = neck.x;
                 }
                 if(ou.val1 == -1) { continue; }
-                ou.sk = SKILL::OPMATEOR;
+                if(in.getCost(SKILL::OPMATEOR) <= in.getCost(SKILL::OPGHOST)) {
+                    ou.sk = SKILL::OPMATEOR;
+                } else {
+                    ou.val1 = nj.y;
+                    ou.val2 = nj.x;
+                    ou.sk = SKILL::OPGHOST;
+                }
                 return;
             }
         }
@@ -935,7 +985,7 @@ void findCritical(Output& ou, Input& in) {
             }
         }
     }*/
-    /*if(me.nin >= in.getCost(SKILL::SONIC) + costmin && in.getCost(SKILL::SONIC) <= 2) {
+    /*if(me.nin >= in.getCost(SKILL::SONIC) + costmin && in.getCost(SKILL::SONIC) < 2) {
         ou.sk = SKILL::SONIC;
         return;
     }*/
