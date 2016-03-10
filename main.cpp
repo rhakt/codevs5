@@ -833,7 +833,7 @@ void findCritical(Output& ou, Input& in) {
     }
     prevop = op;
     
-    uint costmin = 0; //min(12u, in.getCost(SKILL::TORNADO)) + in.getCost(SKILL::OPMATEOR);
+    uint costmin = in.getCost(SKILL::MYTHUNDER);
     
     if(me.nin >= in.getCost(SKILL::OPGHOST) && op.nin >= in.getCost(SKILL::MYGHOST)) {
         for(auto&& nj : op.ninja) {
