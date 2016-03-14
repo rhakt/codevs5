@@ -155,19 +155,19 @@ struct Status {
 };
 
 struct ScoredMove {
-    array<Move, 2> mv = {Move{DIR::NONE}, Move{DIR::NONE}};
-    array<int, 2> score = {-INF, -INF};
+    array<Move, 2> mv;
+    array<int, 2> score;
     Status st;
     array<Point, 2> ch;
     SKILL sk = SKILL::NONE;
     uint val1 = 0, val2 = 0;
     bool cancel = false;
     ScoredMove() = default;
-    ScoredMove(array<Move, 2>&& mv, array<int, 2>& score, Status&& st, array<Point, 2> ch, SKILL sk = SKILL::NONE, uint val1 = -1, uint val2 = -1, bool cancel = false)
+    ScoredMove(array<Move, 2>&& mv, array<int, 2> score, Status&& st, array<Point, 2> ch, SKILL sk = SKILL::NONE, uint val1 = -1, uint val2 = -1, bool cancel = false)
         : mv(mv), score(score), st(st), ch(ch), sk(sk), val1(val1), val2(val2), cancel(cancel) {}
-    ScoredMove(array<Move, 2>&& mv, array<int, 2>& score, Status& st, array<Point, 2> ch, SKILL sk = SKILL::NONE, uint val1 = -1, uint val2 = -1, bool cancel = false)
+    ScoredMove(array<Move, 2>&& mv, array<int, 2> score, Status& st, array<Point, 2> ch, SKILL sk = SKILL::NONE, uint val1 = -1, uint val2 = -1, bool cancel = false)
         : mv(mv), score(score), st(st), ch(ch), sk(sk), val1(val1), val2(val2), cancel(cancel) {}
-    ScoredMove(array<Move, 2>& mv, array<int, 2>& score, Status& st, array<Point, 2> ch, SKILL sk = SKILL::NONE, uint val1 = -1, uint val2 = -1, bool cancel = false)
+    ScoredMove(array<Move, 2>& mv, array<int, 2> score, Status& st, array<Point, 2> ch, SKILL sk = SKILL::NONE, uint val1 = -1, uint val2 = -1, bool cancel = false)
         : mv(mv), score(score), st(st), ch(ch), sk(sk), val1(val1), val2(val2), cancel(cancel) {}
 };
 
@@ -383,9 +383,14 @@ inline int cancelClosed(Status& st, const uid_t id, Move& mv, Point& p) {
 }
 
 template <class D, class F>
-inline bool tryMove(Status& st, const int y, const int x, D d, const F& func) {
+inline bool tryMove(Status& st, const int id, const int y, const int x, D d, const F& func) {
     if(!isMovable(st, y, x, d)) { return false; }
+    auto& ff = st.field[y][x];
     auto& f = st.getField(y, x, d);
+    if(id != -1) {
+        ff.chara[id] = false;
+        f.chara[id] = true;
+    }
     bool soul = f.soul;
     if(soul) { f.soul = false; }
     if(f.type == FIELD::ROCK) {
@@ -394,6 +399,10 @@ inline bool tryMove(Status& st, const int y, const int x, D d, const F& func) {
         backStone(st, f.y, f.x, d);
     } else {
         func(f.y, f.x, false, soul);
+    }
+    if(id != -1) {
+        ff.chara[id] = true;
+        f.chara[id] = false;
     }
     if(soul) { f.soul = true; }
     return true;
@@ -408,7 +417,7 @@ bool greedRoute(Status& st, const int sy, const int sx, const int dy, const int 
     for(auto&& c : cond) {
         auto& f = st.getField(sy, sx, c);
         if(f.threat) { continue; }
-        tryMove(st, sy, sx, c, [&](const int yy, const int xx, bool stone, bool soul) {
+        tryMove(st, -1, sy, sx, c, [&](const int yy, const int xx, bool stone, bool soul) {
             if(yy == dy && xx == dx) { res = true; return; }
             res = greedRoute(st, yy, xx, dy, dx);
         });
@@ -483,7 +492,7 @@ void safeMoveI(vector<ScoredMove>& mv, Status& st, const uid_t id, const int y, 
     auto& ch = st.ninja[id];
     if(range == 0) { return; }
     for(uint i = (none ? 4 : 0); i < 5; i++) {
-        tryMove(st, y, x, i, [&](const int yy, const int xx, bool stone, bool soul) {
+        tryMove(st, id, y, x, i, [&](const int yy, const int xx, bool stone, bool soul) {
             if(range == 1 && st.field[yy][xx].threat) { return; }
             if(range > 1) {
                 vector<ScoredMove> mv2;
@@ -507,7 +516,7 @@ void safeMove(vector<ScoredMove>& mv, Status& st, const uid_t id, const int y, c
     auto& ch = st.ninja[id];
     if(range == 0) { return; }
     for(uint i = (none ? 4 : 0); i < 5; i++) {
-        tryMove(st, y, x, i, [&](const int yy, const int xx, bool stone, bool soul) {
+        tryMove(st, id, y, x, i, [&](const int yy, const int xx, bool stone, bool soul) {
             if(range == 1 && st.field[yy][xx].threat) { return; }
             auto score = 0;
             if(soul) { score += 10000 * depth; }
@@ -556,7 +565,7 @@ void fakeMove(vector<ScoredMove>& mv, Status& st, Status& ost, const uid_t id, c
     auto& ch = st.ninja[id];
     if(range == 0) { return; }
     for(uint i = (none ? 4 : 0); i < 5; i++) {
-        tryMove(st, y, x, i, [&](const int yy, const int xx, bool stone, bool soul) {
+        tryMove(st, id, y, x, i, [&](const int yy, const int xx, bool stone, bool soul) {
             if(stone) { return; }
             if(range == 1 && st.field[yy][xx].threat) { return; }
             if(range == 1 && !ost.field[yy][xx].threat) { return; }
@@ -598,7 +607,7 @@ bool checkMove(Status& st, const uid_t id, const int y, const int x, const uint 
     if(range == 0) { return true; }
     for(uint i = 0; i < 5; i++) {
         bool flag = false;
-        tryMove(st, y, x, i, [&](const int yy, const int xx, bool stone, bool soul) {
+        tryMove(st, id, y, x, i, [&](const int yy, const int xx, bool stone, bool soul) {
             if(range == 1 && st.field[yy][xx].threat) { return; }
             if(range > 1) {
                 flag = checkMove(st, id, yy, xx, range - 1);
@@ -621,6 +630,7 @@ void safeRoute(Input& in, Output& ou, vector<ScoredMove>& mv, Status& st, const 
     auto& ch1 = st.ninja[0];
     auto& ch2 = st.ninja[1];
     safeMove(mv1, st, 2, 2, depth, true);
+    bool closed = mv1.empty();
     if(in.st[1].nin >= in.getCost(SKILL::OPMATEOR)) {
         vector<Point> neckList;
         int neckc = 0;
@@ -663,7 +673,7 @@ void safeRoute(Input& in, Output& ou, vector<ScoredMove>& mv, Status& st, const 
             for(auto&& mm : mv2) {
                 Point neck;
                 for(uid_t i = 0; i < 2; i++) {
-                    if(in.st[1].nin >= in.getCost(SKILL::OPMATEOR)
+                    if(in.st[1].nin >= in.getCost(SKILL::OPMATEOR) && !closed
                         && cancelClosed(st, st.ninja[i].y, st.ninja[i].x, mm.mv[i], neck) != -1) { goto failtor; }
                 }
                 mm.sk = SKILL::TORNADO; mm.val1 = i;
@@ -680,7 +690,7 @@ void safeRoute(Input& in, Output& ou, vector<ScoredMove>& mv, Status& st, const 
             Point neck;
             for(uid_t i = 0; i < 2; i++) {
                 mm.score[i] -= in.getCost(SKILL::SONIC) * depth * 10000;
-                if(in.st[1].nin >= in.getCost(SKILL::OPMATEOR)
+                if(in.st[1].nin >= in.getCost(SKILL::OPMATEOR) && !closed
                     && cancelClosed(st, st.ninja[i].y, st.ninja[i].x, mm.mv[i], neck) != -1) { goto failson; }
             }
             mm.sk = SKILL::SONIC;
@@ -703,7 +713,7 @@ void safeRoute(Input& in, Output& ou, vector<ScoredMove>& mv, Status& st, const 
                         Point neck;
                         for(uid_t i = 0; i < 2; i++) {
                             mm.score[i] -= in.getCost(SKILL::MYTHUNDER) * 10000;
-                            if(in.st[1].nin >= in.getCost(SKILL::OPMATEOR)
+                            if(in.st[1].nin >= in.getCost(SKILL::OPMATEOR) && !closed
                                 && cancelClosed(st, st.ninja[i].y, st.ninja[i].x, mm.mv[i], neck) != -1) { goto failthu; }
                         }
                         mm.sk = SKILL::MYTHUNDER; mm.val1 = dy; mm.val2 = dx;
@@ -718,16 +728,17 @@ void safeRoute(Input& in, Output& ou, vector<ScoredMove>& mv, Status& st, const 
     if(st.nin >= in.getCost(SKILL::MYGHOST)) {
         vector<Point> cond ={{st.ninja[0].y, st.ninja[0].x},{st.ninja[1].y, st.ninja[1].x},{1, 1},{st.h -2 , 1},{st.h - 2, st.w - 2},{1, st.w - 2}};
         bool suc = false;
+        Status ost = st;
         for(auto&& c : cond) {
             if(st.field[c.y][c.x].type != FIELD::FLOOR) { continue; }
             dogSim(st, c.y, c.x, c.y, c.x, INF, INF, false, [&]() {
                 vector<ScoredMove> mv2;
-                safeMove(mv2, st, 2, 2, depth, true);
+                fakeMove(mv2, st, ost, 0, ch1.y, ch1.x, ch2.y, ch2.x, 2, 2, depth, true, false);
                 for(auto&& mm : mv2) {
                     Point neck;
                     for(uid_t i = 0; i < 2; i++) {
                         mm.score[i] -= in.getCost(SKILL::MYGHOST) * depth * 10000;
-                        if(in.st[1].nin >= in.getCost(SKILL::OPMATEOR)
+                        if(in.st[1].nin >= in.getCost(SKILL::OPMATEOR) && !closed
                             && cancelClosed(st, st.ninja[i].y, st.ninja[i].x, mm.mv[i], neck) != -1) { goto failgoh; }
                     }
                     mm.sk = SKILL::MYGHOST; mm.val1 = c.y; mm.val2 = c.x;
